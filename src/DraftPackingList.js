@@ -1398,7 +1398,9 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
         preparedByRole: userRole,
         preparedByEmail: userEmail,
         status: 'FINAL',
-        documentType: 'FINAL'
+        documentType: 'FINAL',
+        draftId: draftToConvert.id,
+        originalDraftId: draftToConvert.id
       };
 
       addDebugMessage(`Converting draft to final bill: ${billNumber}`, 'info');
