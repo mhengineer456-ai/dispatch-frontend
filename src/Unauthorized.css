@@ -1,0 +1,151 @@
+/* Unauthorized.css */
+
+.unauthorized-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 20px;
+}
+
+.unauthorized-content {
+  background: white;
+  border-radius: 16px;
+  padding: 48px 40px;
+  text-align: center;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  max-width: 500px;
+  width: 100%;
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+.unauthorized-icon {
+  font-size: 80px;
+  margin-bottom: 20px;
+  animation: shake 0.5s ease-in-out;
+}
+
+.unauthorized-content h1 {
+  color: #333;
+  font-size: 32px;
+  margin-bottom: 16px;
+  font-weight: 600;
+}
+
+.unauthorized-content p {
+  color: #666;
+  font-size: 16px;
+  margin-bottom: 32px;
+  line-height: 1.5;
+}
+
+.unauthorized-actions {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn-back,
+.btn-home {
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 500;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-family: inherit;
+}
+
+.btn-back {
+  background-color: #f0f0f0;
+  color: #333;
+}
+
+.btn-back:hover {
+  background-color: #e0e0e0;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.btn-home {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.btn-home:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-back:active,
+.btn-home:active {
+  transform: translateY(0);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  10%, 30%, 50%, 70%, 90% {
+    transform: translateX(-5px);
+  }
+  20%, 40%, 60%, 80% {
+    transform: translateX(5px);
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .unauthorized-content {
+    padding: 32px 24px;
+  }
+
+  .unauthorized-icon {
+    font-size: 60px;
+  }
+
+  .unauthorized-content h1 {
+    font-size: 28px;
+  }
+
+  .unauthorized-content p {
+    font-size: 14px;
+  }
+
+  .btn-back,
+  .btn-home {
+    padding: 10px 20px;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .unauthorized-actions {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .btn-back,
+  .btn-home {
+    width: 100%;
+  }
+
+  .unauthorized-content {
+    padding: 24px 20px;
+  }
+}

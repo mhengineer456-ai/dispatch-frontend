@@ -1,0 +1,549 @@
+/* StickerPrinter.css - Updated for Thermal Printer */
+
+.sticker-printer-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease;
+}
+
+.sticker-printer-modal {
+    background: white;
+    border-radius: 16px;
+    max-width: 550px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    animation: slideUp 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid #e5e7eb;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 16px 16px 0 0;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+    color: white;
+}
+
+.close-button {
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    color: white;
+}
+
+.close-button:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(1.05);
+}
+
+/* Printer Status Bar */
+.printer-status-bar {
+    margin: 16px 24px 0;
+    padding: 12px 16px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.875rem;
+}
+
+.printer-status-bar.ready {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.printer-status-bar.not-ready {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.status-icon {
+    font-size: 1rem;
+}
+
+/* Preview Section */
+.preview-section {
+    padding: 24px;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb;
+}
+
+.preview-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.preview-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: #374151;
+}
+
+.preview-badge {
+    margin-left: auto;
+    padding: 4px 8px;
+    background: #e5e7eb;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    color: #4b5563;
+}
+
+/* Thermal Sticker Preview - Actual Size */
+.sticker-preview-large {
+    background: white;
+    border: 2px solid #1e40af;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    margin: 0 auto;
+}
+
+.sticker-content-thermal {
+    padding: 4px 6px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    font-family: 'Courier New', monospace;
+}
+
+.sticker-lot-number-thermal {
+    text-align: center;
+    background: linear-gradient(135deg, #1e40af, #3b82f6);
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: bold;
+    color: white;
+    margin-bottom: 2px;
+}
+
+.sticker-party-thermal {
+    font-size: 7px;
+    font-weight: 600;
+    color: #1e293b;
+    text-align: center;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sticker-barcode-thermal {
+    text-align: center;
+    margin: 2px 0;
+}
+
+.barcode-canvas-thermal {
+    max-width: 100%;
+    height: 28px;
+}
+
+.sticker-pieces-thermal {
+    background: #f8fafc;
+    padding: 2px 4px;
+    border-radius: 4px;
+    margin: 2px 0;
+    font-size: 6px;
+    text-align: center;
+}
+
+.pieces-row {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+}
+
+.pieces-label {
+    color: #64748b;
+    font-weight: 500;
+}
+
+.pieces-value {
+    color: #1e40af;
+    font-weight: bold;
+}
+
+.ratio-row {
+    text-align: center;
+    color: #475569;
+    font-size: 5px;
+    margin-top: 1px;
+}
+
+.sticker-id-thermal {
+    text-align: center;
+    font-size: 5px;
+    color: #94a3b8;
+    border-top: 0.5px dashed #e2e8f0;
+    padding-top: 2px;
+    margin-top: auto;
+}
+
+.barcode-info {
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: #e8f4fd;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.7rem;
+    color: #1e40af;
+}
+
+.info-icon {
+    font-size: 0.8rem;
+}
+
+/* Print Settings Section */
+.print-settings-section {
+    padding: 20px 24px;
+}
+
+.settings-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.settings-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: #374151;
+}
+
+.printer-selector,
+.label-size-selector {
+    margin-bottom: 16px;
+}
+
+.settings-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #4b5563;
+}
+
+.printer-select,
+.size-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    background: white;
+    cursor: pointer;
+}
+
+.printer-select:disabled,
+.size-select:disabled {
+    background: #f3f4f6;
+    cursor: not-allowed;
+}
+
+.count-selector {
+    margin-bottom: 16px;
+}
+
+.count-label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #374151;
+}
+
+.count-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    justify-content: center;
+}
+
+.count-button {
+    width: 36px;
+    height: 36px;
+    border: 1px solid #d1d5db;
+    background: white;
+    border-radius: 8px;
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.count-button:hover:not(:disabled) {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+}
+
+.count-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.count-input {
+    width: 100px;
+    height: 36px;
+    text-align: center;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+.quick-count-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+
+.quick-btn {
+    flex: 1;
+    padding: 6px 12px;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.quick-btn:hover:not(:disabled) {
+    background: #e5e7eb;
+}
+
+.quick-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Print Progress */
+.print-progress {
+    margin: 16px 0;
+}
+
+.progress-bar-container {
+    background: #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;
+    height: 8px;
+}
+
+.progress-bar {
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    height: 100%;
+    transition: width 0.3s ease;
+    border-radius: 10px;
+}
+
+.progress-text {
+    text-align: center;
+    font-size: 0.75rem;
+    margin-top: 6px;
+    color: #6b7280;
+}
+
+/* Print Result */
+.print-result {
+    margin: 16px 0;
+    padding: 12px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.85rem;
+}
+
+.print-result.success {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.print-result.error {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+/* Print Summary */
+.print-summary {
+    background: #f9fafb;
+    padding: 12px;
+    border-radius: 8px;
+    margin: 16px 0;
+}
+
+.summary-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 0.8rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.summary-item:last-child {
+    border-bottom: none;
+}
+
+.summary-label {
+    color: #6b7280;
+}
+
+.summary-value {
+    font-weight: 500;
+    color: #374151;
+}
+
+.summary-value.highlight {
+    color: #3b82f6;
+    font-weight: 600;
+}
+
+/* Action Buttons */
+.action-buttons {
+    display: flex;
+    gap: 12px;
+    margin: 20px 0;
+}
+
+.print-button-primary,
+.print-button-secondary {
+    flex: 1;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s;
+    border: none;
+}
+
+.print-button-primary {
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    color: white;
+}
+
+.print-button-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.print-button-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.print-button-secondary {
+    background: #f3f4f6;
+    color: #4b5563;
+    border: 1px solid #e5e7eb;
+}
+
+.print-button-secondary:hover:not(:disabled) {
+    background: #e5e7eb;
+}
+
+.print-button-secondary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Spinner */
+.spinner-small {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Print Tip */
+.print-tip {
+    margin-top: 16px;
+    padding: 8px 12px;
+    background: #fef3c7;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.7rem;
+    color: #92400e;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+    .sticker-printer-modal {
+        width: 95%;
+        max-height: 95vh;
+    }
+    
+    .preview-section,
+    .print-settings-section {
+        padding: 16px;
+    }
+    
+    .quick-count-buttons {
+        gap: 6px;
+    }
+    
+    .quick-btn {
+        font-size: 0.7rem;
+        padding: 4px 8px;
+    }
+    
+    .action-buttons {
+        flex-direction: column;
+    }
+}

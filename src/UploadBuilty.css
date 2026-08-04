@@ -1,0 +1,159 @@
+/* UploadBuilty.css */
+.upload-builty-container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 20px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.upload-builty-header {
+  margin-bottom: 30px;
+  border-bottom: 2px solid #607D8B;
+  padding-bottom: 15px;
+}
+
+.upload-builty-header h2 {
+  margin: 0;
+  color: #333;
+  font-size: 24px;
+}
+
+.back-button {
+  background: #607D8B;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 15px;
+  font-size: 14px;
+}
+
+.back-button:hover {
+  background: #455A64;
+}
+
+.builty-form {
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+}
+
+.form-section {
+  background: #f9f9f9;
+  padding: 20px;
+  border-radius: 10px;
+  border-left: 4px solid #607D8B;
+}
+
+.form-section h3 {
+  margin-top: 0;
+  margin-bottom: 20px;
+  color: #607D8B;
+  font-size: 18px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+  margin-bottom: 15px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-group label {
+  font-weight: 600;
+  color: #555;
+  font-size: 14px;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color 0.3s;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #607D8B;
+}
+
+.form-group input[type="file"] {
+  padding: 8px;
+  border: 1px dashed #607D8B;
+  background: #fff;
+}
+
+.form-group small {
+  color: #888;
+  font-size: 12px;
+}
+
+.form-actions {
+  display: flex;
+  gap: 15px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.cancel-button,
+.submit-button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  transition: all 0.3s;
+}
+
+.cancel-button {
+  background: #e0e0e0;
+  color: #666;
+}
+
+.cancel-button:hover {
+  background: #ccc;
+}
+
+.submit-button {
+  background: #607D8B;
+  color: white;
+}
+
+.submit-button:hover {
+  background: #455A64;
+}
+
+@media (max-width: 768px) {
+  .upload-builty-container {
+    padding: 15px;
+  }
+  
+  .form-row {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+  
+  .form-actions {
+    flex-direction: column;
+  }
+  
+  .cancel-button,
+  .submit-button {
+    width: 100%;
+  }
+}
