@@ -641,16 +641,26 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
       isUpdate: true
     };
 
-    // 1. Generate & Download Updated Draft PDF
-    setProcessingStage('pdf');
-    addDebugMessage(`Generating updated PDF for draft ${selectedDraft.id}...`, 'info');
-    await generatePackingListPDF(updatedDraft);
+    try {
+      setSavingToSheet(true);
+      setProcessingStage('updating_sheet');
+      showToast("Updating draft...", "info");
+      addDebugMessage(`Updating draft ${selectedDraft.id}...`, 'info');
 
-    // 2. Save / Update to Backend & Google Sheets
-    setProcessingStage('sheet');
-    const result = await saveDraftToGoogleSheets(updatedDraft, true);
+      // 1. Save / Update to Backend & Google Sheets FIRST
+      const result = await saveDraftToGoogleSheets(updatedDraft, true);
 
-    if (result.success) {
+      if (!result.success) {
+        throw new Error(result.error || "Failed to update draft");
+      }
+
+      addDebugMessage(`Draft ${selectedDraft.id} updated successfully on server`, 'success');
+
+      // 2. Generate & Download Updated Draft PDF AFTER server update succeeds
+      setProcessingStage('pdf');
+      addDebugMessage(`Generating updated PDF for draft ${selectedDraft.id}...`, 'info');
+      await generatePackingListPDF(updatedDraft);
+
       setShowSuccessAnimation(true);
       setTimeout(() => setShowSuccessAnimation(false), 2000);
 
@@ -660,8 +670,13 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
       setIsCreating(false);
       setIsEditingExisting(false);
       showToast(`Draft ${selectedDraft.id} updated & PDF downloaded!`, "success");
-    } else {
-      showToast("Failed to update draft: " + result.error, "error");
+    } catch (err) {
+      console.error("Error updating draft:", err);
+      showToast("Failed to update draft: " + err.message, "error");
+      addDebugMessage(`❌ Failed to update draft: ${err.message}`, 'error');
+    } finally {
+      setSavingToSheet(false);
+      setProcessingStage(null);
     }
   };
 
@@ -1346,11 +1361,24 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
 
     try {
       setSavingToSheet(true);
+      setProcessingStage('converting');
+      showToast("Conversion started...", "info");
       addDebugMessage("Converting draft to final bill...", 'info');
+
+      const latestDraft = getCurrentDraft(draftToConvert.id) || draftToConvert;
+
+      // Silently refresh/sync latest draft state if local edits exist
+      if (localEditedDrafts[draftToConvert.id]) {
+        try {
+          await saveDraftToGoogleSheets(latestDraft, true);
+        } catch (silentErr) {
+          console.warn("Silent draft update notice:", silentErr.message);
+        }
+      }
 
       const billNumber = await getNextBillNumber('PL');
 
-      const totalQuantity = draftToConvert.items.reduce((sum, item) => {
+      const totalQuantity = latestDraft.items.reduce((sum, item) => {
         return sum + (parseInt(item.quantity) || 0);
       }, 0);
 
@@ -1359,13 +1387,13 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
       const finalBillData = {
         billNumber: billNumber,
         packingNumber: billNumber,
-        partyName: draftToConvert.partyName,
-        orderNo: draftToConvert.orderNo,
-        orderReference: draftToConvert.orderNo,
+        partyName: latestDraft.partyName,
+        orderNo: latestDraft.orderNo,
+        orderReference: latestDraft.orderNo,
         dispatchDate: todayStr, // ALWAYS set to TODAY'S DATE when converting draft to final bill
         billDate: todayStr,     // ALWAYS set to TODAY'S DATE when converting draft to final bill
         dueDate: "",
-        items: draftToConvert.items.map((item, idx) => ({
+        items: latestDraft.items.map((item, idx) => ({
           id: Date.now() + idx,
           barcode: item.barcode || item.lotNumber,
           lotNumber: item.lotNumber,
@@ -1382,40 +1410,48 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
           partNo: item.partNo || extractPartNo(item),
           rate: item.rate || extractRate(item)
         })),
-        notes: draftToConvert.notes,
-        deliveryAddress: draftToConvert.deliveryAddress,
-        specialInstructions: draftToConvert.specialInstructions,
-        priority: draftToConvert.priority,
+        notes: latestDraft.notes,
+        deliveryAddress: latestDraft.deliveryAddress,
+        specialInstructions: latestDraft.specialInstructions,
+        priority: latestDraft.priority,
         packingMaterials: {
           totalBoxes: 0,
           totalBags: 0,
           totalPolybags: 0
         },
         totalQuantity: totalQuantity,
-        totalItems: draftToConvert.items.length,
+        totalItems: latestDraft.items.length,
         createdDate: new Date().toISOString(),
         preparedBy: preparedBy,
         preparedByRole: userRole,
         preparedByEmail: userEmail,
         status: 'FINAL',
         documentType: 'FINAL',
-        draftId: draftToConvert.id,
-        originalDraftId: draftToConvert.id
+        draftId: latestDraft.id,
+        originalDraftId: latestDraft.id
       };
 
       addDebugMessage(`Converting draft to final bill: ${billNumber}`, 'info');
 
+      // 1. Save data to Backend & Google Sheets FIRST
+      setProcessingStage('converting_sheet');
+      const saved = await saveFinalBillToSheet(finalBillData);
+
+      if (!saved) {
+        throw new Error("Failed to save final bill to backend/sheet");
+      }
+
+      addDebugMessage(`Final bill ${billNumber} saved successfully`, 'success');
+
+      // 2. Generate and download PDF ONLY AFTER backend processing is done
       setProcessingStage('pdf');
       const pdfGenerated = await generatePackingListPDF(finalBillData);
 
       if (!pdfGenerated) {
-        throw new Error("Failed to generate PDF");
+        addDebugMessage(`Warning: PDF generation failed, but bill ${billNumber} was saved.`, 'warning');
+      } else {
+        addDebugMessage(`PDF generated successfully`, 'success');
       }
-
-      addDebugMessage(`PDF generated successfully`, 'success');
-
-      setProcessingStage('sheet');
-      const saved = await saveFinalBillToSheet(finalBillData);
 
       if (saved) {
         addDebugMessage(`Final bill ${billNumber} saved successfully`, 'success');
@@ -2115,18 +2151,28 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
     let title = "Syncing Draft Record";
     let subtitle = "Writing bill entries & lot items to server...";
     let stagePercent = 50;
+    const isConversion = processingStage?.startsWith('converting') || (processingStage === 'pdf' && draftToConvert);
+    const isUpdatingDraft = processingStage?.startsWith('updating') || (isEditingExisting && (processingStage === 'sheet' || savingToSheet));
 
-    if (processingStage === 'pdf') {
-      title = "Generating Final Bill Document";
-      subtitle = "Formatting layout & creating invoice PDF...";
-      stagePercent = 40;
+    if (processingStage === 'converting' || processingStage === 'converting_sheet') {
+      title = "Converting Draft to Final Bill";
+      subtitle = "Saving final bill & updating server records...";
+      stagePercent = 50;
+    } else if (processingStage === 'updating_sheet' || isUpdatingDraft) {
+      title = "Updating Draft Record";
+      subtitle = "Saving updated items & lot quantities to cloud server...";
+      stagePercent = 60;
+    } else if (processingStage === 'pdf') {
+      title = isConversion ? "Generating Final Bill PDF" : (isUpdatingDraft ? "Generating Updated Draft PDF" : "Generating Bill Document");
+      subtitle = isConversion ? "Formatting layout & downloading invoice PDF..." : "Formatting layout & creating invoice PDF...";
+      stagePercent = 85;
     } else if (processingStage === 'sheet' || savingToSheet) {
       title = isEditingExisting ? "Updating Draft Record" : "Saving New Draft Record";
       subtitle = "Securing items & lot quantities to cloud server...";
       stagePercent = 85;
     } else if (showSuccessAnimation || processingStage === 'complete') {
-      title = "Draft Saved Successfully!";
-      subtitle = "All items & draft data synced with server.";
+      title = isConversion ? "Final Bill Created Successfully!" : (isUpdatingDraft ? "Draft Updated Successfully!" : "Draft Saved Successfully!");
+      subtitle = isConversion ? "Final bill saved & draft removed from server." : "All items & draft data synced with server.";
       stagePercent = 100;
     }
 
@@ -2228,11 +2274,11 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
             color: '#64748b',
             padding: '0 8px'
           }}>
-            <span style={{ color: processingStage === 'pdf' ? '#2563eb' : (savingToSheet || showSuccessAnimation) ? '#10b981' : '#94a3b8' }}>
-              {(savingToSheet || showSuccessAnimation) ? '✓ Items Validated' : '1. Item Audit'}
+            <span style={{ color: (processingStage === 'updating_sheet' || processingStage === 'converting' || processingStage === 'converting_sheet' || processingStage === 'pdf' || showSuccessAnimation) ? (processingStage === 'pdf' || showSuccessAnimation ? '#10b981' : '#2563eb') : '#94a3b8' }}>
+              {(processingStage === 'pdf' || showSuccessAnimation) ? (isUpdatingDraft ? '✓ Draft Updated' : '✓ Server Saved') : '1. Server Update'}
             </span>
-            <span style={{ color: savingToSheet ? '#2563eb' : showSuccessAnimation ? '#10b981' : '#94a3b8' }}>
-              {showSuccessAnimation ? '✓ Synced to Server' : '2. Server Sync'}
+            <span style={{ color: processingStage === 'pdf' ? '#2563eb' : showSuccessAnimation ? '#10b981' : '#94a3b8' }}>
+              {showSuccessAnimation ? '✓ PDF Downloaded' : '2. PDF Download'}
             </span>
           </div>
 

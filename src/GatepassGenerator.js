@@ -1080,22 +1080,20 @@ const GatepassGenerator = ({ parties = [], gatepasses = [], onSubmit, onBack }) 
 
     setGeneratedGatepass(gatepassWithBills);
 
-    // Generate PDF
-    const pdfBlob = generatePDF(gatepassWithBills);
-
-    // Send email with PDF
-    const emailSent = await sendGatepassEmail(gatepassWithBills, pdfBlob);
-
-    // Update Google Sheet
+    // 1. Update SQLite Database & Google Sheet FIRST
     const updateSuccess = await updateBillsWithGatepassInfo(gatepassData.selectedBills, gatepassNumber);
 
-    // Download PDF
+    // 2. Generate & Download PDF
+    const pdfBlob = generatePDF(gatepassWithBills);
     const pdfUrl = URL.createObjectURL(pdfBlob);
     const downloadLink = document.createElement('a');
     downloadLink.href = pdfUrl;
     downloadLink.download = `Gatepass_${gatepassNumber}.pdf`;
     downloadLink.click();
     URL.revokeObjectURL(pdfUrl);
+
+    // 3. Send email in background (non-blocking for UI & sheet update)
+    sendGatepassEmail(gatepassWithBills, pdfBlob).catch(err => console.warn('Gatepass email notice:', err.message));
 
     if (onSubmit) {
       onSubmit(gatepassWithBills);
