@@ -3061,13 +3061,13 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
               { header: "S.No", width: 8 },
               { header: "Part No.", width: 16 },
               { header: "Lot No", width: 15 },
-              { header: "Brand", width: 20 },
-              { header: "Item Description", width: 42 },
+              { header: "Brand", width: 28 },
+              { header: "Item Description", width: 46 },
               { header: "Sets", width: 14 },
               { header: "Pc/Set", width: 14 },
               { header: "Loose Pc", width: 15 },
-              { header: "Total Qty", width: 16 },
-              { header: "Check", width: 10 }
+              { header: "Total Qty", width: 18 },
+              { header: "Check", width: 6 }
             ];
           } else {
             tableColumns = [
@@ -3225,12 +3225,12 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
             let setsX, setsW, looseX, looseW, qtyX, qtyW;
 
             if (docType.name === "Account") {
-              setsX = leftMargin + 8 + 16 + 15 + 20 + 42; // 131
+              setsX = leftMargin + 8 + 16 + 15 + 28 + 46;
               setsW = 14;
-              looseX = setsX + 14 + 14; // 159
+              looseX = setsX + 14 + 14;
               looseW = 15;
-              qtyX = looseX + 15; // 174
-              qtyW = 16;
+              qtyX = looseX + 15;
+              qtyW = 18;
             } else {
               setsX = leftMargin + 9 + 20 + 24 + 57; // 125
               setsW = 17;

@@ -181,6 +181,11 @@ function TodayDispatchDetail({ updateDispatchStatus, onBack }) {
     });
   };
 
+  const extractPartNo = (item) => {
+    if (!item) return "";
+    return item.partNo || item.PartNo || item.part_no || item.partNumber || item['PART NO.'] || item['PART NO'] || item['Part No.'] || item['Part No'] || "";
+  };
+
   const parseItems = (items) => {
     if (!items || !Array.isArray(items)) return [];
 
@@ -193,6 +198,8 @@ function TodayDispatchDetail({ updateDispatchStatus, onBack }) {
       setsPerPcs: item.setsPerPcs || item.SetsPerPcs || item.setsPerPiece || 1,
       loosePcs: item.loosePcs || item.LoosePcs || 0,
       quantity: item.quantity || item.Quantity || 0,
+      partNo: item.partNo || item.PartNo || item.part_no || item.partNumber || item['PART NO.'] || item['PART NO'] || item['Part No.'] || item['Part No'] || '',
+      rate: item.rate || item.Rate || item.PRICE || item.price || '',
       colors: Array.isArray(item.colors) ? item.colors : (item.colors ? [item.colors] : []),
       sizes: Array.isArray(item.sizes) ? item.sizes : (item.sizes ? [item.sizes] : [])
     }));
@@ -690,427 +697,452 @@ function TodayDispatchDetail({ updateDispatchStatus, onBack }) {
     }
   };
 
-  // Generate Individual Packing List PDF
+  // Generate Individual Packing List PDF (PartyBill Style)
   const generateBillPDF = async (dispatch) => {
+    if (!dispatch || !dispatch.items || dispatch.items.length === 0) {
+      alert("Invalid dispatch data or no items found");
+      return false;
+    }
+
     setGeneratingPDF(true);
 
     try {
+      const packingData = {
+        partyName: dispatch.partyName || 'N/A',
+        billDate: dispatch.billDate || new Date().toLocaleDateString(),
+        orderReference: dispatch.orderReference || 'N/A',
+        packingNumber: dispatch.orderNo || dispatch.packingNumber || dispatch.id || 'N/A',
+        preparedBy: dispatch.preparedBy || 'System',
+        preparedByRole: dispatch.preparedByRole || 'Staff',
+        packingMaterials: dispatch.packingMaterials || { totalBoxes: 0, totalBags: 0, totalPolybags: 0 },
+        items: dispatch.items
+      };
+
+      const documentTypes = [
+        { name: "Customer", subheading: "PACKING LIST FOR CUSTOMER" },
+        { name: "Account", subheading: "PACKING LIST FOR ACCOUNT OFFICE" }
+      ];
+
       const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      const leftMargin = 12;
-      const rightMargin = 12;
+      const leftMargin = 15;
+      const rightMargin = 15;
       const contentWidth = pageWidth - leftMargin - rightMargin;
 
-      const uniqueLots = new Set(dispatch.items.map(item => item.lotNumber)).size;
-      const totalItems = dispatch.items.length;
-      const totalQuantity = dispatch.totalQuantity;
+      const uniqueLots = new Set(packingData.items.map(item => item.lotNumber)).size;
+      const totalItems = packingData.items.length;
+      const totalQuantity = packingData.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+      const totalSets = packingData.items.reduce((sum, item) => sum + (parseInt(item.sets) || 0), 0);
 
-      let totalSets = 0;
-      let totalLoose = 0;
+      const totalItemsList = packingData.items.length;
+      const ROWS_PER_PAGE = 14;
+      const totalPagesOverall = documentTypes.length * Math.ceil(totalItemsList / ROWS_PER_PAGE);
 
-      dispatch.items.forEach(item => {
-        let sets = item.sets;
-        if (sets) {
-          if (typeof sets === 'string' && sets.includes('+')) {
-            sets = sets.split('+').reduce((a, b) => a + (Number(b) || 0), 0);
-          } else {
-            sets = Number(sets) || 0;
+      let overallPageCounter = 1;
+
+      documentTypes.forEach((docType) => {
+        let itemsProcessed = 0;
+
+        while (itemsProcessed < totalItemsList) {
+          const remainingRows = totalItemsList - itemsProcessed;
+          const rowsOnThisPage = Math.min(ROWS_PER_PAGE, remainingRows);
+          const isLastPageOfSection = (itemsProcessed + rowsOnThisPage) === totalItemsList;
+
+          if (overallPageCounter > 1) {
+            doc.addPage();
           }
-          totalSets += sets;
-        }
-        totalLoose += Number(item.loosePcs) || 0;
-      });
 
-      let yPos = 15;
-
-      doc.setLineWidth(0.5);
-      doc.rect(5, 5, pageWidth - 10, pageHeight - 10);
-      doc.setLineWidth(0.3);
-
-      doc.setFont("times", "bold");
-      doc.setFontSize(16);
-      doc.text("Packing List", pageWidth / 2, yPos, { align: "center" });
-      yPos += 6.5;
-
-      doc.setFontSize(12);
-      doc.setTextColor(0, 0, 0);
-      doc.text("PACKING LIST FOR ACCOUNT OFFICE", pageWidth / 2, yPos, { align: "center" });
-      doc.setTextColor(0, 0, 0);
-      yPos += 8;
-
-      const partyName = dispatch.partyName || 'N/A';
-      doc.setFont("times", "bold");
-      doc.setFontSize(18);
-
-      if (doc.getTextWidth(partyName) > contentWidth) {
-        let remainingName = partyName;
-        let lines = [];
-        while (remainingName.length > 0) {
-          let line = "";
-          for (let i = 0; i < remainingName.length; i++) {
-            const testLine = line + remainingName[i];
-            if (doc.getTextWidth(testLine) <= contentWidth) {
-              line = testLine;
-            } else {
-              break;
-            }
-          }
-          lines.push(line);
-          remainingName = remainingName.substring(line.length);
-        }
-        for (let i = 0; i < lines.length; i++) {
-          doc.text(lines[i], pageWidth / 2, yPos, { align: "center" });
-          yPos += 6;
-        }
-        yPos += 3;
-      } else {
-        doc.text(partyName, pageWidth / 2, yPos, { align: "center" });
-        yPos += 6;
-      }
-
-      const boxHeight = 42;
-      doc.rect(leftMargin, yPos, contentWidth, boxHeight);
-
-      const midPoint = leftMargin + (contentWidth / 2);
-      doc.line(midPoint, yPos, midPoint, yPos + boxHeight);
-
-      const leftLabelX = leftMargin + 5;
-      const leftValueX = leftMargin + 40;
-
-      doc.setFont("times", "bold");
-      doc.setFontSize(9);
-
-      doc.text("Date", leftLabelX, yPos + 7);
-      doc.text(":", leftLabelX + 18, yPos + 7);
-      doc.setFont("times", "normal");
-      doc.text(dispatch.billDate || new Date().toLocaleDateString(), leftValueX, yPos + 7);
-
-      doc.setFont("times", "bold");
-      doc.text("Order Ref", leftLabelX, yPos + 14);
-      doc.text(":", leftLabelX + 18, yPos + 14);
-      doc.setFont("times", "normal");
-      const orderRef = (dispatch.orderReference || 'N/A').substring(0, 25);
-      doc.text(orderRef, leftValueX, yPos + 14);
-
-      doc.setFont("times", "bold");
-      doc.text("Doc No", leftLabelX, yPos + 21);
-      doc.text(":", leftLabelX + 18, yPos + 21);
-      doc.setFont("times", "normal");
-      doc.text(dispatch.orderNo || 'N/A', leftValueX, yPos + 21);
-
-      doc.setFont("times", "bold");
-      doc.text("Generated By", leftLabelX, yPos + 28);
-      doc.text(":", leftLabelX + 18, yPos + 28);
-      doc.setFont("times", "normal");
-      const preparedByText = `${dispatch.preparedBy || 'System'} (${dispatch.preparedByRole || 'User'})`;
-      doc.text(preparedByText.substring(0, 25), leftValueX, yPos + 28);
-
-      doc.setFont("times", "bold");
-      doc.text("Packing Materials", leftLabelX, yPos + 35);
-      doc.text(":", leftLabelX + 18, yPos + 35);
-      doc.setFont("times", "normal");
-      const packingMaterials = dispatch.packingMaterials || { totalBoxes: 0, totalBags: 0, totalPolybags: 0 };
-      const materialParts = [];
-      if (packingMaterials.totalBoxes > 0) materialParts.push(`${packingMaterials.totalBoxes} Boxes`);
-      if (packingMaterials.totalBags > 0) materialParts.push(`${packingMaterials.totalBags} Bags`);
-      if (packingMaterials.totalPolybags > 0) materialParts.push(`${packingMaterials.totalPolybags} Polybags`);
-      const materialsText = materialParts.length > 0 ? materialParts.join(', ') : 'None';
-      doc.text(materialsText.substring(0, 30), leftValueX, yPos + 35);
-
-      const rightLabelX = midPoint + 5;
-      const rightValueX = midPoint + 38;
-
-      doc.setFont("times", "bold");
-      doc.setFontSize(9);
-
-      doc.text("Total Lots", rightLabelX, yPos + 7);
-      doc.text(":", rightLabelX + 18, yPos + 7);
-      doc.setFont("times", "normal");
-      doc.text(uniqueLots.toString(), rightValueX, yPos + 7);
-
-      doc.setFont("times", "bold");
-      doc.text("Total Items", rightLabelX, yPos + 14);
-      doc.text(":", rightLabelX + 18, yPos + 14);
-      doc.setFont("times", "normal");
-      doc.text(totalItems.toString(), rightValueX, yPos + 14);
-
-      doc.setFont("times", "bold");
-      doc.text("Total Qty", rightLabelX, yPos + 21);
-      doc.text(":", rightLabelX + 18, yPos + 21);
-      doc.setFont("times", "normal");
-      doc.text(`${totalQuantity} PCS`, rightValueX, yPos + 21);
-
-      doc.setFont("times", "bold");
-      doc.text("Total Sets", rightLabelX, yPos + 28);
-      doc.text(":", rightLabelX + 18, yPos + 28);
-      doc.setFont("times", "normal");
-      doc.text(totalSets.toString(), rightValueX, yPos + 28);
-
-      doc.setFont("times", "bold");
-      doc.text("Document Type", rightLabelX, yPos + 35);
-      doc.text(":", rightLabelX + 18, yPos + 35);
-      doc.setFont("times", "bold");
-      doc.setTextColor(0, 0, 0);
-      doc.text(dispatch.status === 'completed' ? "COMPLETED" : (dispatch.status?.toUpperCase() || "PENDING"), rightValueX, yPos + 35);
-      doc.setTextColor(0, 0, 0);
-
-      yPos += boxHeight + 6;
-
-      const tableColumns = [
-        { header: "S.No", width: 10 },
-        { header: "Lot Number", width: 22 },
-        { header: "Brand", width: 26 },
-        { header: "Description", width: 55 },
-        { header: "Sets", width: 15 },
-        { header: "Pc/Set", width: 15 },
-        { header: "OP", width: 10 },
-        { header: "Loose", width: 15 },
-        { header: "Total", width: 20 }
-      ];
-
-      doc.setFont("times", "bold");
-      doc.setFontSize(9);
-      doc.setFillColor(240, 240, 240);
-      doc.rect(leftMargin, yPos, contentWidth, 8, 'F');
-      doc.rect(leftMargin, yPos, contentWidth, 8);
-
-      let currentX = leftMargin;
-      tableColumns.forEach(col => {
-        const textWidth = doc.getTextWidth(col.header);
-        const textX = currentX + (col.width / 2) - (textWidth / 2);
-        doc.text(col.header, textX, yPos + 5.5);
-        currentX += col.width;
-        if (currentX < pageWidth - rightMargin) {
-          doc.line(currentX, yPos, currentX, yPos + 8);
-        }
-      });
-
-      yPos += 8;
-
-      let itemsProcessed = 0;
-      while (itemsProcessed < dispatch.items.length) {
-        const item = dispatch.items[itemsProcessed];
-        const rowHeight = 8;
-
-        doc.rect(leftMargin, yPos, contentWidth, rowHeight);
-
-        let colX = leftMargin;
-        const colWidths = [10, 22, 26, 55, 15, 15, 10, 15, 20];
-        colWidths.forEach(width => {
-          colX += width;
-          if (colX < pageWidth - rightMargin) {
-            doc.line(colX, yPos, colX, yPos + rowHeight);
-          }
-        });
-
-        let displaySets = item.sets || 0;
-        if (typeof displaySets === 'string' && displaySets.includes('+')) {
-          const sum = displaySets.split('+').reduce((a, b) => a + (Number(b) || 0), 0);
-          displaySets = `${displaySets}=${sum}`;
-        }
-
-        let opSymbol = "";
-        const loosePcsValue = Number(item.loosePcs) || 0;
-        const operation = item.looseOperation || "add";
-
-        if (loosePcsValue > 0) {
-          opSymbol = operation === "subtract" ? "-" : "+";
-        } else {
-          opSymbol = "";
-        }
-
-        const values = [
-          (itemsProcessed + 1).toString(),
-          (item.lotNumber || "").toString(),
-          (item.brand || "").toString().substring(0, 15),
-          (item.description || "").toString().substring(0, 30),
-          displaySets.toString(),
-          (item.setsPerPcs || 0).toString(),
-          opSymbol,
-          (item.loosePcs || 0).toString(),
-          (item.quantity || 0).toString()
-        ];
-
-        const boldColumns = [1, 5, 8];
-
-        let textX = leftMargin;
-        values.forEach((value, colIndex) => {
-          const textWidth = doc.getTextWidth(value);
-          const textXPos = textX + (colWidths[colIndex] / 2) - (textWidth / 2);
-
-          if (boldColumns.includes(colIndex)) {
-            doc.setFont("times", "bold");
-            doc.setFontSize(10);
-          } else {
-            doc.setFont("times", "normal");
-            doc.setFontSize(9);
-          }
-          doc.text(value, textXPos, yPos + 5.5);
-
-          textX += colWidths[colIndex];
-        });
-
-        yPos += rowHeight;
-        itemsProcessed++;
-
-        if (yPos > pageHeight - 55 && itemsProcessed < dispatch.items.length) {
-          doc.addPage();
-          yPos = 15;
-
+          // 1. Page Outer Border
           doc.setLineWidth(0.5);
           doc.rect(5, 5, pageWidth - 10, pageHeight - 10);
           doc.setLineWidth(0.3);
 
+          // 2. Header
           doc.setFont("times", "bold");
-          doc.setFontSize(22);
-          doc.text("Packing List", pageWidth / 2, yPos, { align: "center" });
-          yPos += 10;
+          doc.setFontSize(20);
+          doc.text("PACKING LIST", pageWidth / 2, 16, { align: "center" });
 
-          doc.setFontSize(14);
-          doc.setTextColor(0, 0, 0);
-          doc.text("PACKING LIST FOR ACCOUNT OFFICE", pageWidth / 2, yPos, { align: "center" });
-          doc.setTextColor(0, 0, 0);
-          yPos += 8;
-
+          doc.setFontSize(10.5);
           doc.setFont("times", "bold");
-          doc.setFontSize(13);
-          doc.text(partyName, pageWidth / 2, yPos, { align: "center" });
-          yPos += 6;
+          const sub = docType.subheading.replace(/^PACKING LIST FOR\s*/i, 'FOR ');
+          const subWidth = doc.getTextWidth(sub);
+          const midX = pageWidth / 2;
+          doc.line(midX - subWidth / 2 - 22, 21.5, midX - subWidth / 2 - 3, 21.5);
+          doc.text(sub, midX, 22.8, { align: "center" });
+          doc.line(midX + subWidth / 2 + 3, 21.5, midX + subWidth / 2 + 22, 21.5);
 
-          doc.rect(leftMargin, yPos, contentWidth, boxHeight);
-          doc.line(midPoint, yPos, midPoint, yPos + boxHeight);
-          yPos += boxHeight + 6;
+          const partyName = (packingData.partyName || 'N/A').toUpperCase();
+          doc.setFontSize(17);
+          doc.setFont("times", "bold");
+          doc.text(partyName, midX, 31, { align: "center" });
 
+          // 3. Metadata Box (35mm to 73mm)
+          const metaY = 35;
+          const metaH = 38;
+          doc.rect(leftMargin, metaY, contentWidth, metaH);
+          const midPoint = leftMargin + (contentWidth / 2);
+          doc.line(midPoint, metaY, midPoint, metaY + metaH);
+
+          const leftLabelX = leftMargin + 5;
+          const leftValX = leftMargin + 40;
           doc.setFont("times", "bold");
           doc.setFontSize(9);
-          doc.setFillColor(240, 240, 240);
-          doc.rect(leftMargin, yPos, contentWidth, 8, 'F');
-          doc.rect(leftMargin, yPos, contentWidth, 8);
 
-          currentX = leftMargin;
-          tableColumns.forEach(col => {
-            const textWidth = doc.getTextWidth(col.header);
-            const textX = currentX + (col.width / 2) - (textWidth / 2);
-            doc.text(col.header, textX, yPos + 5.5);
-            currentX += col.width;
-            if (currentX < pageWidth - rightMargin) {
-              doc.line(currentX, yPos, currentX, yPos + 8);
+          doc.text("Date", leftLabelX, metaY + 6);
+          doc.text(":", leftLabelX + 22, metaY + 6);
+          doc.setFont("times", "normal");
+          doc.text(`${packingData.billDate || new Date().toLocaleDateString()}`, leftValX, metaY + 6);
+
+          doc.setFont("times", "bold");
+          doc.text("Order Ref", leftLabelX, metaY + 13);
+          doc.text(":", leftLabelX + 22, metaY + 13);
+          doc.setFont("times", "normal");
+          doc.text(`${packingData.orderReference || 'N/A'}`, leftValX, metaY + 13);
+
+          doc.setFont("times", "bold");
+          doc.text("Doc No", leftLabelX, metaY + 20);
+          doc.text(":", leftLabelX + 22, metaY + 20);
+          doc.setFont("times", "normal");
+          doc.text(`${packingData.packingNumber || 'N/A'}`, leftValX, metaY + 20);
+
+          doc.setFont("times", "bold");
+          doc.text("Generated By", leftLabelX, metaY + 27);
+          doc.text(":", leftLabelX + 22, metaY + 27);
+          doc.setFont("times", "normal");
+          doc.text(`${packingData.preparedBy} (${packingData.preparedByRole})`, leftValX, metaY + 27);
+
+          doc.setFont("times", "bold");
+          doc.text("Packing Materials", leftLabelX, metaY + 34);
+          doc.text(":", leftLabelX + 22, metaY + 34);
+          doc.setFont("times", "normal");
+          const packingMaterials = packingData.packingMaterials || { totalBoxes: 0, totalBags: 0, totalPolybags: 0 };
+          const matParts = [];
+          if (packingMaterials.totalBoxes > 0) matParts.push(`${packingMaterials.totalBoxes} Box${packingMaterials.totalBoxes !== 1 ? 'es' : ''}`);
+          if (packingMaterials.totalBags > 0) matParts.push(`${packingMaterials.totalBags} Bag${packingMaterials.totalBags !== 1 ? 's' : ''}`);
+          if (packingMaterials.totalPolybags > 0) matParts.push(`${packingMaterials.totalPolybags} Polybag${packingMaterials.totalPolybags !== 1 ? 's' : ''}`);
+          doc.text(matParts.length > 0 ? matParts.join(', ') : 'None', leftValX, metaY + 34);
+
+          const rightLabelX = midPoint + 5;
+          const rightValX = midPoint + 40;
+
+          doc.setFont("times", "bold");
+          doc.text("Total Lots", rightLabelX, metaY + 6);
+          doc.text(":", rightLabelX + 22, metaY + 6);
+          doc.setFont("times", "normal");
+          doc.text(uniqueLots.toString(), rightValX, metaY + 6);
+
+          doc.setFont("times", "bold");
+          doc.text("Total Items", rightLabelX, metaY + 13);
+          doc.text(":", rightLabelX + 22, metaY + 13);
+          doc.setFont("times", "normal");
+          doc.text(totalItems.toString(), rightValX, metaY + 13);
+
+          doc.setFont("times", "bold");
+          doc.text("Total Qty", rightLabelX, metaY + 20);
+          doc.text(":", rightLabelX + 22, metaY + 20);
+          doc.setFont("times", "normal");
+          doc.text(`${totalQuantity} PCS`, rightValX, metaY + 20);
+
+          doc.setFont("times", "bold");
+          doc.text("Total Sets", rightLabelX, metaY + 27);
+          doc.text(":", rightLabelX + 22, metaY + 27);
+          doc.setFont("times", "normal");
+          doc.text(totalSets.toString(), rightValX, metaY + 27);
+
+          doc.setFont("times", "bold");
+          doc.text("Total Value", rightLabelX, metaY + 34);
+          doc.text(":", rightLabelX + 22, metaY + 34);
+          doc.setFont("times", "normal");
+          doc.text("To be calculated", rightValX, metaY + 34);
+
+          // 4. Table Frame (Continuous Grid down to totalRowTop)
+          const tableTop = 77;
+          const totalRowTop = 237;
+          const tableBottom = 246;
+          const headerHeight = 9;
+
+          let tableColumns;
+          if (docType.name === "Account") {
+            tableColumns = [
+              { header: "S.No", width: 8 },
+              { header: "Part No.", width: 16 },
+              { header: "Lot No", width: 15 },
+              { header: "Brand", width: 28 },
+              { header: "Item Description", width: 46 },
+              { header: "Sets", width: 14 },
+              { header: "Pc/Set", width: 14 },
+              { header: "Loose Pc", width: 15 },
+              { header: "Total Qty", width: 18 },
+              { header: "Check", width: 6 }
+            ];
+          } else {
+            tableColumns = [
+              { header: "S.No", width: 9 },
+              { header: "Lot No", width: 20 },
+              { header: "Brand", width: 24 },
+              { header: "Item Description", width: 57 },
+              { header: "Sets", width: 17 },
+              { header: "Pc/Set", width: 17 },
+              { header: "Loose Pc", width: 17 },
+              { header: "Total Qty", width: 19 }
+            ];
+          }
+
+          // Main Table Outer Rect (from tableTop to totalRowTop)
+          doc.rect(leftMargin, tableTop, contentWidth, totalRowTop - tableTop);
+
+          // Vertical Grid Lines from tableTop to totalRowTop
+          let colX = leftMargin;
+          tableColumns.forEach((col, index) => {
+            colX += col.width;
+            if (index < tableColumns.length - 1) {
+              doc.line(colX, tableTop, colX, totalRowTop);
             }
           });
 
-          yPos += 8;
-        }
-      }
+          // Table Header Line & Text
+          doc.line(leftMargin, tableTop + headerHeight, leftMargin + contentWidth, tableTop + headerHeight);
+          doc.setFont("times", "bold");
 
-      if (dispatch.items.length > 0) {
-        const totalRowHeight = 8;
+          let curX = leftMargin;
+          tableColumns.forEach(col => {
+            const maxHeaderWidth = col.width - 1;
+            let fontSize = 8.5;
+            doc.setFontSize(fontSize);
+            while (fontSize > 6 && doc.getTextWidth(col.header) > maxHeaderWidth) {
+              fontSize -= 0.5;
+              doc.setFontSize(fontSize);
+            }
 
-        doc.setFillColor(245, 245, 245);
-        doc.rect(leftMargin, yPos, contentWidth, totalRowHeight, 'F');
-        doc.rect(leftMargin, yPos, contentWidth, totalRowHeight);
+            const textWidth = doc.getTextWidth(col.header);
+            doc.text(col.header, curX + (col.width / 2) - (textWidth / 2), tableTop + 6);
+            curX += col.width;
+          });
 
-        let colX = leftMargin;
-        const colWidths = [10, 22, 26, 55, 15, 15, 10, 15, 20];
-        colWidths.forEach(width => {
-          colX += width;
-          if (colX < pageWidth - rightMargin) {
-            doc.line(colX, yPos, colX, yPos + totalRowHeight);
+          // Table Item Rows
+          doc.setFont("times", "normal");
+          doc.setFontSize(8.5);
+
+          let curY = tableTop + headerHeight;
+          for (let i = 0; i < rowsOnThisPage; i++) {
+            const itemIndex = itemsProcessed;
+            const item = packingData.items[itemIndex];
+
+            let values;
+            if (docType.name === "Account") {
+              const partNoVal = item.partNo || extractPartNo(item) || "";
+              values = [
+                (itemIndex + 1).toString(),
+                partNoVal,
+                item.lotNumber || "",
+                item.brand || "",
+                item.description || item.name || "",
+                (item.sets || 0).toString(),
+                (item.setsPerPcs || 0).toString(),
+                (item.loosePcs || 0).toString(),
+                (item.quantity || 0).toString(),
+                "CHECKBOX"
+              ];
+            } else {
+              values = [
+                (itemIndex + 1).toString(),
+                item.lotNumber || "",
+                item.brand || "",
+                item.description || item.name || "",
+                (item.sets || 0).toString(),
+                (item.setsPerPcs || 0).toString(),
+                (item.loosePcs || 0).toString(),
+                (item.quantity || 0).toString()
+              ];
+            }
+
+            // Calculate max lines needed for this row
+            let maxLinesInRow = 1;
+            const wrappedValues = values.map((val, cIdx) => {
+              if (val === "CHECKBOX") return ["CHECKBOX"];
+              const cWidth = tableColumns[cIdx].width;
+              const maxAllowed = cWidth - 2.5;
+              const splitLines = doc.splitTextToSize(String(val || ''), maxAllowed);
+              if (splitLines.length > maxLinesInRow) {
+                maxLinesInRow = splitLines.length;
+              }
+              return splitLines;
+            });
+
+            const calculatedRowHeight = Math.max(8.5, maxLinesInRow * 4 + 2);
+
+            // Render text lines and small checkbox in cells
+            let cX = leftMargin;
+            wrappedValues.forEach((lines, cIdx) => {
+              const cWidth = tableColumns[cIdx].width;
+              const cellCenterX = cX + (cWidth / 2);
+              const startY = curY + (calculatedRowHeight / 2) - ((lines.length - 1) * 3.6 / 2) + 1.2;
+
+              const isLotNumber = (docType.name === "Account" && cIdx === 2) || (docType.name !== "Account" && cIdx === 1);
+
+              if (lines[0] === "CHECKBOX") {
+                const cbX = cellCenterX - 1.4;
+                const cbY = curY + (calculatedRowHeight / 2) - 1.4;
+                doc.rect(cbX, cbY, 2.8, 2.8);
+              } else {
+                if (isLotNumber) {
+                  doc.setFont("times", "bold");
+                  doc.setFontSize(9);
+                  doc.setTextColor(0, 0, 0);
+                } else {
+                  doc.setFont("times", "normal");
+                  doc.setFontSize(8.5);
+                }
+
+                lines.forEach((lineText, lineIdx) => {
+                  const lineY = startY + (lineIdx * 3.6);
+                  doc.text(lineText, cellCenterX, lineY, { align: "center" });
+                });
+
+                if (isLotNumber) {
+                  doc.setFont("times", "normal");
+                  doc.setFontSize(8.5);
+                }
+              }
+
+              cX += cWidth;
+            });
+
+            curY += calculatedRowHeight;
+            doc.line(leftMargin, curY, leftMargin + contentWidth, curY);
+            itemsProcessed++;
           }
-        });
 
-        const totalValues = [
-          "",
-          "TOTAL",
-          "",
-          "",
-          totalSets.toString(),
-          "",
-          "",
-          totalLoose.toString(),
-          totalQuantity.toString()
-        ];
-
-        let textX = leftMargin;
-        totalValues.forEach((value, colIndex) => {
-          const textWidth = doc.getTextWidth(value);
-          const textXPos = textX + (colWidths[colIndex] / 2) - (textWidth / 2);
+          // TOTAL ROW at bottom of table (237mm to 246mm)
+          doc.setLineWidth(0.4);
+          doc.rect(leftMargin, totalRowTop, contentWidth, tableBottom - totalRowTop);
+          doc.setLineWidth(0.3);
 
           doc.setFont("times", "bold");
-          doc.setFontSize(10);
-          doc.text(value, textXPos, yPos + 5.5);
+          doc.setFontSize(9);
 
-          textX += colWidths[colIndex];
-        });
+          if (isLastPageOfSection) {
+            doc.text("TOTAL", leftMargin + 4, totalRowTop + 6);
 
-        yPos += totalRowHeight;
-      }
+            const totalSetsVal = packingData.items.reduce((s, i) => s + (parseInt(i.sets) || 0), 0);
+            const totalLooseVal = packingData.items.reduce((s, i) => s + (parseInt(i.loosePcs) || 0), 0);
+            const totalQtyVal = packingData.items.reduce((s, i) => s + (parseInt(i.quantity) || 0), 0);
 
-      yPos += 3;
-      doc.setLineWidth(0.5);
-      doc.line(leftMargin, yPos, leftMargin + contentWidth, yPos);
+            let setsX, setsW, looseX, looseW, qtyX, qtyW;
 
-      const footerY = pageHeight - 22;
-      doc.setFont("times", "bold");
-      doc.setFontSize(9);
-      doc.setLineWidth(0.3);
+            if (docType.name === "Account") {
+              setsX = leftMargin + 8 + 16 + 15 + 28 + 46;
+              setsW = 14;
+              looseX = setsX + 14 + 14;
+              looseW = 15;
+              qtyX = looseX + 15;
+              qtyW = 18;
+            } else {
+              setsX = leftMargin + 9 + 20 + 24 + 57;
+              setsW = 17;
+              looseX = setsX + 17 + 17;
+              looseW = 17;
+              qtyX = looseX + 17;
+              qtyW = 19;
+            }
 
-      const sectionWidth = (contentWidth - 20) / 4;
-      let sigX = leftMargin;
+            doc.line(setsX, totalRowTop, setsX, tableBottom);
+            doc.line(setsX + setsW, totalRowTop, setsX + setsW, tableBottom);
+            doc.text(totalSetsVal.toString(), setsX + (setsW / 2), totalRowTop + 6, { align: "center" });
 
-      doc.text("Prepared By", sigX + 5, footerY);
-      doc.line(sigX + 5, footerY + 3, sigX + sectionWidth - 5, footerY + 3);
-      doc.setFontSize(8);
-      const preparedText = `${dispatch.preparedBy || 'System'} (${dispatch.preparedByRole || 'User'})`;
-      doc.text(preparedText.substring(0, 18), sigX + 5, footerY + 8);
+            doc.line(looseX, totalRowTop, looseX, tableBottom);
+            doc.line(looseX + looseW, totalRowTop, looseX + looseW, tableBottom);
+            doc.text(totalLooseVal.toString(), looseX + (looseW / 2), totalRowTop + 6, { align: "center" });
 
-      sigX += sectionWidth;
-      doc.setFontSize(9);
-      doc.text("Account Officer", sigX + 5, footerY);
-      doc.line(sigX + 5, footerY + 3, sigX + sectionWidth - 5, footerY + 3);
-      doc.setFontSize(8);
-      doc.text("(Name & Signature)", sigX + 5, footerY + 8);
+            doc.line(qtyX, totalRowTop, qtyX, totalRowTop + (tableBottom - totalRowTop));
+            doc.line(qtyX + qtyW, totalRowTop, qtyX + qtyW, tableBottom);
+            doc.text(totalQtyVal.toString(), qtyX + (qtyW / 2), totalRowTop + 6, { align: "center" });
+          }
 
-      sigX += sectionWidth;
-      doc.setFontSize(9);
-      doc.text("Checked By", sigX + 5, footerY);
-      doc.line(sigX + 5, footerY + 3, sigX + sectionWidth - 5, footerY + 3);
-      doc.setFontSize(8);
-      doc.text("(Name & Signature)", sigX + 5, footerY + 8);
+          // 5. NOTES Box (249mm to 258mm)
+          const notesY = 249;
+          const notesH = 9;
+          doc.rect(leftMargin, notesY, contentWidth, notesH);
+          doc.line(leftMargin + 25, notesY, leftMargin + 25, notesY + notesH);
 
-      sigX += sectionWidth;
-      doc.setFontSize(9);
-      doc.text("Authorized Signatory", sigX + 5, footerY);
-      doc.line(sigX + 5, footerY + 3, pageWidth - rightMargin - 5, footerY + 3);
-      doc.setFontSize(8);
-      doc.text("(Name & Signature)", sigX + 5, footerY + 8);
+          doc.setFont("times", "bold");
+          doc.setFontSize(9);
+          doc.text("NOTES", leftMargin + 6, notesY + 6);
 
-      const totalPages = doc.internal.getNumberOfPages();
-      for (let i = 1; i <= totalPages; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(100, 100, 100);
-        doc.text(
-          `Page ${i} of ${totalPages}`,
-          pageWidth / 2,
-          pageHeight - 10,
-          { align: "center" }
-        );
-        doc.setTextColor(0, 0, 0);
-      }
+          doc.setFont("times", "normal");
+          const noteText = docType.name === "Account"
+            ? "Account copy - Keep for accounts audit"
+            : "Customer copy - Please retain for your records";
+          doc.text(noteText, leftMargin + 28, notesY + 6);
 
-      const safePartyName = (dispatch.partyName || 'Unknown')
+          // 6. Signatures Box (260mm to 284mm)
+          const sigY = 260;
+          const sigH = 24;
+          doc.rect(leftMargin, sigY, contentWidth, sigH);
+
+          const secW = contentWidth / 4;
+          for (let s = 1; s < 4; s++) {
+            doc.line(leftMargin + (s * secW), sigY, leftMargin + (s * secW), sigY + sigH);
+          }
+
+          const sigTitles = [
+            "Prepared By",
+            "Account Officer",
+            "Checked By",
+            "Authorized Signatory"
+          ];
+
+          const sigSubtexts = [
+            `${packingData.preparedBy}`,
+            "(Name & Signature)",
+            "(Name & Signature)",
+            "(Name & Signature)"
+          ];
+
+          doc.setFont("times", "bold");
+          doc.setFontSize(9);
+
+          sigTitles.forEach((title, idx) => {
+            const sX = leftMargin + (idx * secW);
+            const tW = doc.getTextWidth(title);
+            doc.text(title, sX + (secW / 2) - (tW / 2), sigY + 6);
+
+            doc.setLineWidth(0.3);
+            doc.line(sX + 5, sigY + 17, sX + secW - 5, sigY + 17);
+
+            doc.setFont("times", "normal");
+            doc.setFontSize(8);
+            const subText = sigSubtexts[idx];
+            const subW = doc.getTextWidth(subText);
+            doc.text(subText, sX + (secW / 2) - (subW / 2), sigY + 21);
+            doc.setFont("times", "bold");
+            doc.setFontSize(9);
+          });
+
+          // 7. Page Footer
+          doc.setFont("times", "normal");
+          doc.setFontSize(8.5);
+          doc.setTextColor(50, 50, 50);
+          doc.text(`Page ${overallPageCounter} of ${totalPagesOverall}`, pageWidth / 2, 289, { align: "center" });
+          doc.setTextColor(0, 0, 0);
+
+          overallPageCounter++;
+        }
+      });
+
+      const sanitizedPartyName = (packingData.partyName || 'Party')
         .replace(/[^a-zA-Z0-9]/g, '_')
         .substring(0, 30);
 
-      const fileName = `PackingList_${dispatch.orderNo}_${safePartyName}_${new Date().toISOString().split('T')[0]}.pdf`;
+      const fileName = `${sanitizedPartyName}_PackingList_${packingData.packingNumber}_${new Date().toISOString().split('T')[0]}.pdf`;
       doc.save(fileName);
-
-      alert(`PDF generated successfully for ${dispatch.orderNo}!`);
+      return true;
 
     } catch (error) {
       console.error("PDF Generation Error:", error);
       alert("Failed to generate PDF: " + error.message);
+      return false;
     } finally {
       setGeneratingPDF(false);
     }

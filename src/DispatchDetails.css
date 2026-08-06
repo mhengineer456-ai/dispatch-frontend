@@ -5,11 +5,11 @@
   min-height: 100vh;
   background: #f8fafc;
   font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  padding: 28px 20px;
+  padding: 10px 10px;
 }
 
 .dispatch-modern-wrapper {
-  max-width: 2400px;
+  max-width: 2600px;
   margin: 0 auto;
   background: #ffffff;
   border-radius: 24px;
@@ -593,7 +593,8 @@
 
 .dispatch-modern-table thead {
   background: #0f172a;
-  border-bottom: 3px solid #f59e0b; /* Gold highlights */
+  border-bottom: 3px solid #f59e0b;
+  /* Gold highlights */
 }
 
 .dispatch-modern-table thead th {
@@ -774,16 +775,16 @@
     width: 120px;
     font-size: 12px;
   }
-  
+
   .dispatch-modern-active-filters {
     flex-direction: column;
     align-items: stretch;
   }
-  
+
   .dispatch-modern-clear-all-filters {
     margin-left: 0;
   }
-  
+
   .dispatch-modern-filter-tag {
     justify-content: space-between;
   }
@@ -851,6 +852,7 @@
   font-weight: 700 !important;
   color: #0f172a !important;
 }
+
 /* ============================================
    NEW: Item/Style Search Section Styles
    ============================================ */
@@ -1076,6 +1078,7 @@
   flex-direction: column;
   gap: 4px;
 }
+
 /* Back Button Styles */
 .dispatch-modern-back-btn {
   display: flex;
@@ -1338,37 +1341,37 @@
     margin: 16px;
     padding: 16px;
   }
-  
+
   .dispatch-modern-item-card-header {
     flex-direction: column;
     align-items: flex-start;
   }
-  
+
   .dispatch-modern-item-card-info {
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
   }
-  
+
   .dispatch-modern-item-details {
     grid-template-columns: 1fr;
   }
-  
+
   .dispatch-modern-item-summary {
     flex-direction: column;
     align-items: flex-start;
   }
-  
+
   .dispatch-modern-item-actions {
     flex-direction: column;
   }
-  
+
   .dispatch-modern-pdf-small-btn,
   .dispatch-modern-view-details-btn {
     width: 100%;
     justify-content: center;
   }
-  
+
   .dispatch-modern-excel-btn,
   .dispatch-modern-export-all-btn {
     width: 100%;
@@ -1382,6 +1385,7 @@
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -1428,7 +1432,7 @@
     break-inside: avoid;
     page-break-inside: avoid;
   }
-  
+
   .dispatch-modern-excel-btn,
   .dispatch-modern-export-all-btn,
   .dispatch-modern-excel-export-btn {
@@ -1677,9 +1681,17 @@
   font-weight: 600;
 }
 
-.dispatch-modern-status-text.pending { color: #d97706; }
-.dispatch-modern-status-text.active { color: #2563eb; }
-.dispatch-modern-status-text.completed { color: #059669; }
+.dispatch-modern-status-text.pending {
+  color: #d97706;
+}
+
+.dispatch-modern-status-text.active {
+  color: #2563eb;
+}
+
+.dispatch-modern-status-text.completed {
+  color: #059669;
+}
 
 .dispatch-modern-items-title {
   color: #0f172a;
@@ -1722,7 +1734,8 @@
 .dispatch-modern-items-table td {
   padding: 10px 12px;
   border-bottom: 1px solid #e2e8f0;
-  color: #0f172a !important; /* Force high contrast black */
+  color: #0f172a !important;
+  /* Force high contrast black */
   font-weight: 700;
   vertical-align: top;
   font-size: 13.5px;
@@ -1878,8 +1891,15 @@
 }
 
 @keyframes dispatchModernBounce {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-20px); }
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-20px);
+  }
 }
 
 /* Error State */
@@ -1933,6 +1953,7 @@
 
 /* Responsive */
 @media (max-width: 1200px) {
+
   .dispatch-modern-stats-grid,
   .dispatch-modern-metrics {
     grid-template-columns: repeat(2, 1fr);
@@ -1941,7 +1962,7 @@
 
 @media (max-width: 768px) {
   .dispatch-modern-container {
-    padding: 16px;
+    padding: 14px;
   }
 
   .dispatch-modern-stats-grid,
@@ -1960,7 +1981,7 @@
   .dispatch-modern-table {
     min-width: 1000px;
   }
-  
+
   .dispatch-modern-items-table {
     min-width: 700px;
   }
@@ -2117,11 +2138,11 @@
   .dispatch-modern-date-range-controls {
     flex-direction: column;
   }
-  
+
   .dispatch-modern-pdf-actions {
     width: 100%;
   }
-  
+
   .dispatch-modern-pdf-btn {
     flex: 1;
     justify-content: center;

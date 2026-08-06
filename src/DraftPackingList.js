@@ -106,14 +106,30 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
   const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [draftToConvert, setDraftToConvert] = useState(null);
+  const [isConverting, setIsConverting] = useState(false);
 
   // Product database state
   const [sheetData, setSheetData] = useState([]);
   const [oldLotData, setOldLotData] = useState([]);
   const [loadingProductData, setLoadingProductData] = useState(false);
 
-  // Local edited drafts (not saved to Google Sheets)
-  const [localEditedDrafts, setLocalEditedDrafts] = useState({});
+  // Local edited drafts (backed up to localStorage for zero data loss)
+  const [localEditedDrafts, setLocalEditedDrafts] = useState(() => {
+    try {
+      const saved = localStorage.getItem('mh_local_drafts_backup');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mh_local_drafts_backup', JSON.stringify(localEditedDrafts));
+    } catch (e) {
+      console.warn("Could not write local drafts backup:", e);
+    }
+  }, [localEditedDrafts]);
 
   // Lot search suggestions
   const [lotSearchTerm, setLotSearchTerm] = useState("");
@@ -363,25 +379,34 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
         });
       }
 
-      // 2. Fetch from Google Sheets tab (DraftBills for DL, Bills for PL) up to 10,000 rows
+      // 2. Fetch from Google Sheets tab (DraftBills for DL, Bills for PL) up to 10,000 rows with 2.5s timeout
       const targetSheet = prefix === 'DL' ? 'DraftBills' : (BILLS_SHEET_NAME || 'Bills');
       const apiUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${targetSheet}!A1:A10000?key=${GOOGLE_SHEETS_API_KEY}`;
 
-      const response = await fetch(apiUrl);
-      if (response.ok) {
-        const result = await response.json();
-        if (result.values && result.values.length > 0) {
-          result.values.forEach(row => {
-            const idVal = String(row[0] || '').trim();
-            if (idVal.startsWith(`${prefix}-`)) {
-              const numberPart = idVal.replace(`${prefix}-`, '');
-              if (/^\d+$/.test(numberPart)) {
-                const num = parseInt(numberPart, 10);
-                if (!isNaN(num)) numbers.push(num);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+      try {
+        const response = await fetch(apiUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (response.ok) {
+          const result = await response.json();
+          if (result.values && result.values.length > 0) {
+            result.values.forEach(row => {
+              const idVal = String(row[0] || '').trim();
+              if (idVal.startsWith(`${prefix}-`)) {
+                const numberPart = idVal.replace(`${prefix}-`, '');
+                if (/^\d+$/.test(numberPart)) {
+                  const num = parseInt(numberPart, 10);
+                  if (!isNaN(num)) numbers.push(num);
+                }
               }
-            }
-          });
+            });
+          }
         }
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        console.warn(`Timeout/network fetch notice for ${prefix} bill numbers:`, fetchErr.message);
       }
 
       let lastNumber = 0;
@@ -535,141 +560,148 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
       return;
     }
 
-    const newDraftNumber = await getNextBillNumber('DL');
+    try {
+      setSavingToSheet(true);
+      setProcessingStage('pdf');
+      
+      const newDraftNumber = await getNextBillNumber('DL');
 
-    const totalQuantity = draftForm.items.reduce((sum, item) => {
-      const quantity = Number(item.quantity) || 0;
-      return sum + quantity;
-    }, 0);
+      const totalQuantity = draftForm.items.reduce((sum, item) => {
+        const quantity = Number(item.quantity) || 0;
+        return sum + quantity;
+      }, 0);
 
-    const processedItems = draftForm.items.map(item => ({
-      ...item,
-      quantity: Number(item.quantity) || 0,
-      sets: Number(item.sets) || 0,
-      setsPerPcs: Number(item.setsPerPcs) || 0,
-      loosePcs: Number(item.loosePcs) || 0
-    }));
+      const processedItems = draftForm.items.map(item => ({
+        ...item,
+        quantity: Number(item.quantity) || 0,
+        sets: Number(item.sets) || 0,
+        setsPerPcs: Number(item.setsPerPcs) || 0,
+        loosePcs: Number(item.loosePcs) || 0,
+        partNo: item.partNo || extractPartNo(item),
+        rate: item.rate || extractRate(item)
+      }));
 
-    const newDraft = {
-      billNumber: newDraftNumber,
-      packingNumber: newDraftNumber,
-      orderNo: draftForm.orderNo,
-      partyName: draftForm.partyName,
-      partyId: draftForm.partyId,
-      items: processedItems,
-      billDate: draftForm.dispatchDate || new Date().toISOString().split('T')[0],
-      dispatchDate: draftForm.dispatchDate,
-      deliveryAddress: draftForm.deliveryAddress,
-      specialInstructions: draftForm.specialInstructions,
-      priority: draftForm.priority,
-      notes: draftForm.notes,
-      totalQuantity: totalQuantity,
-      totalItems: draftForm.items.length,
-      createdDate: new Date().toISOString(),
-      preparedBy: preparedBy,
-      preparedByRole: userRole,
-      preparedByEmail: userEmail,
-      status: 'DRAFT',
-      documentType: 'DRAFT',
-      isUpdate: false
-    };
+      const newDraft = {
+        id: newDraftNumber,
+        billNumber: newDraftNumber,
+        packingNumber: newDraftNumber,
+        orderNo: draftForm.orderNo,
+        partyName: draftForm.partyName,
+        partyId: draftForm.partyId,
+        items: processedItems,
+        billDate: draftForm.dispatchDate || new Date().toISOString().split('T')[0],
+        dispatchDate: draftForm.dispatchDate,
+        deliveryAddress: draftForm.deliveryAddress,
+        specialInstructions: draftForm.specialInstructions,
+        priority: draftForm.priority,
+        notes: draftForm.notes,
+        totalQuantity: totalQuantity,
+        totalItems: draftForm.items.length,
+        createdDate: new Date().toISOString(),
+        lastModified: new Date().toISOString(),
+        preparedBy: preparedBy,
+        preparedByRole: userRole,
+        preparedByEmail: userEmail,
+        status: 'DRAFT',
+        documentType: 'DRAFT',
+        isUpdate: false
+      };
 
-    // 1. Generate & Download Draft PDF
-    setProcessingStage('pdf');
-    addDebugMessage(`Generating PDF for draft ${newDraftNumber}...`, 'info');
-    await generatePackingListPDF(newDraft);
+      // 1. Generate & Download Draft PDF immediately
+      addDebugMessage(`Generating PDF for draft ${newDraftNumber}...`, 'info');
+      await generatePackingListPDF(newDraft);
 
-    // 2. Save to Express Backend & Google Sheets
-    setProcessingStage('sheet');
-    const result = await saveDraftToGoogleSheets(newDraft, false);
+      // 2. Update local React state immediately
+      setDrafts(prev => [newDraft, ...prev]);
+      updateLocalDraft(newDraftNumber, newDraft);
 
-    if (result.success) {
-      setShowSuccessAnimation(true);
-      setTimeout(() => setShowSuccessAnimation(false), 2000);
-
-      await loadDraftsFromSheet();
+      // 3. Reset form & close modal immediately
       resetForm();
       setIsCreating(false);
       setIsEditingExisting(false);
       showToast(`Draft ${newDraftNumber} created & PDF downloaded!`, "success");
-    } else {
-      showToast("Failed to save draft: " + result.error, "error");
+
+      // 4. Save to Express Backend & Google Sheets in background (non-blocking)
+      saveDraftToGoogleSheets(newDraft, false).then(() => {
+        loadDraftsFromSheet().catch(() => {});
+      }).catch(err => console.warn("Background draft save warning:", err.message));
+
+    } catch (err) {
+      console.error("Error creating draft:", err);
+      showToast("Error creating draft: " + err.message, "error");
+    } finally {
+      setSavingToSheet(false);
+      setProcessingStage(null);
     }
   };
 
   const handleUpdateDraft = async () => {
     if (!selectedDraft) return;
 
-    const totalQuantity = draftForm.items.reduce((sum, item) => {
-      const quantity = parseInt(item.quantity) || 0;
-      return sum + quantity;
-    }, 0);
-
-    const processedItems = draftForm.items.map(item => ({
-      ...item,
-      quantity: Number(item.quantity) || 0,
-      sets: Number(item.sets) || 0,
-      setsPerPcs: Number(item.setsPerPcs) || 0,
-      loosePcs: Number(item.loosePcs) || 0,
-      partNo: item.partNo || extractPartNo(item),
-      rate: item.rate || extractRate(item)
-    }));
-
-    const updatedDraft = {
-      id: selectedDraft.id,
-      billNumber: selectedDraft.id,
-      packingNumber: selectedDraft.id,
-      orderNo: draftForm.orderNo || selectedDraft.orderNo || '',
-      partyName: draftForm.partyName,
-      partyId: draftForm.partyId,
-      items: processedItems,
-      billDate: draftForm.dispatchDate || selectedDraft.dispatchDate || new Date().toISOString().split('T')[0],
-      dispatchDate: draftForm.dispatchDate,
-      deliveryAddress: draftForm.deliveryAddress,
-      specialInstructions: draftForm.specialInstructions,
-      priority: draftForm.priority,
-      notes: draftForm.notes,
-      totalQuantity: totalQuantity,
-      totalItems: draftForm.items.length,
-      createdDate: selectedDraft.createdDate || new Date().toISOString(),
-      lastModified: new Date().toISOString(),
-      preparedBy: preparedBy,
-      preparedByRole: userRole,
-      preparedByEmail: userEmail,
-      status: 'DRAFT',
-      documentType: 'DRAFT',
-      isUpdate: true
-    };
-
     try {
       setSavingToSheet(true);
-      setProcessingStage('updating_sheet');
-      showToast("Updating draft...", "info");
-      addDebugMessage(`Updating draft ${selectedDraft.id}...`, 'info');
-
-      // 1. Save / Update to Backend & Google Sheets FIRST
-      const result = await saveDraftToGoogleSheets(updatedDraft, true);
-
-      if (!result.success) {
-        throw new Error(result.error || "Failed to update draft");
-      }
-
-      addDebugMessage(`Draft ${selectedDraft.id} updated successfully on server`, 'success');
-
-      // 2. Generate & Download Updated Draft PDF AFTER server update succeeds
       setProcessingStage('pdf');
+
+      const totalQuantity = draftForm.items.reduce((sum, item) => {
+        const quantity = parseInt(item.quantity) || 0;
+        return sum + quantity;
+      }, 0);
+
+      const processedItems = draftForm.items.map(item => ({
+        ...item,
+        quantity: Number(item.quantity) || 0,
+        sets: Number(item.sets) || 0,
+        setsPerPcs: Number(item.setsPerPcs) || 0,
+        loosePcs: Number(item.loosePcs) || 0,
+        partNo: item.partNo || extractPartNo(item),
+        rate: item.rate || extractRate(item)
+      }));
+
+      const updatedDraft = {
+        id: selectedDraft.id,
+        billNumber: selectedDraft.id,
+        packingNumber: selectedDraft.id,
+        orderNo: draftForm.orderNo || selectedDraft.orderNo || '',
+        partyName: draftForm.partyName,
+        partyId: draftForm.partyId,
+        items: processedItems,
+        billDate: draftForm.dispatchDate || selectedDraft.dispatchDate || new Date().toISOString().split('T')[0],
+        dispatchDate: draftForm.dispatchDate,
+        deliveryAddress: draftForm.deliveryAddress,
+        specialInstructions: draftForm.specialInstructions,
+        priority: draftForm.priority,
+        notes: draftForm.notes,
+        totalQuantity: totalQuantity,
+        totalItems: draftForm.items.length,
+        createdDate: selectedDraft.createdDate || new Date().toISOString(),
+        lastModified: new Date().toISOString(),
+        preparedBy: preparedBy,
+        preparedByRole: userRole,
+        preparedByEmail: userEmail,
+        status: 'DRAFT',
+        documentType: 'DRAFT',
+        isUpdate: true
+      };
+
+      // 1. Generate & Download Updated Draft PDF immediately
       addDebugMessage(`Generating updated PDF for draft ${selectedDraft.id}...`, 'info');
       await generatePackingListPDF(updatedDraft);
 
-      setShowSuccessAnimation(true);
-      setTimeout(() => setShowSuccessAnimation(false), 2000);
+      // 2. Update local React state immediately
+      updateLocalDraft(selectedDraft.id, updatedDraft);
 
-      await loadDraftsFromSheet();
+      // 3. Reset form & close modal immediately
       setSelectedDraft(null);
       resetForm();
       setIsCreating(false);
       setIsEditingExisting(false);
       showToast(`Draft ${selectedDraft.id} updated & PDF downloaded!`, "success");
+
+      // 4. Save to Express Backend & Google Sheets in background (non-blocking)
+      saveDraftToGoogleSheets(updatedDraft, true).then(() => {
+        loadDraftsFromSheet().catch(() => {});
+      }).catch(err => console.warn("Background draft update warning:", err.message));
+
     } catch (err) {
       console.error("Error updating draft:", err);
       showToast("Failed to update draft: " + err.message, "error");
@@ -1358,6 +1390,7 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
     }
 
     setShowConfirmModal(false);
+    setIsConverting(true);
 
     try {
       setSavingToSheet(true);
@@ -1366,16 +1399,6 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
       addDebugMessage("Converting draft to final bill...", 'info');
 
       const latestDraft = getCurrentDraft(draftToConvert.id) || draftToConvert;
-
-      // Silently refresh/sync latest draft state if local edits exist
-      if (localEditedDrafts[draftToConvert.id]) {
-        try {
-          await saveDraftToGoogleSheets(latestDraft, true);
-        } catch (silentErr) {
-          console.warn("Silent draft update notice:", silentErr.message);
-        }
-      }
-
       const billNumber = await getNextBillNumber('PL');
 
       const totalQuantity = latestDraft.items.reduce((sum, item) => {
@@ -1443,7 +1466,7 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
 
       addDebugMessage(`Final bill ${billNumber} saved successfully`, 'success');
 
-      // 2. Generate and download PDF ONLY AFTER backend processing is done
+      // 2. Generate and download PDF
       setProcessingStage('pdf');
       const pdfGenerated = await generatePackingListPDF(finalBillData);
 
@@ -1453,61 +1476,443 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
         addDebugMessage(`PDF generated successfully`, 'success');
       }
 
-      if (saved) {
-        addDebugMessage(`Final bill ${billNumber} saved successfully`, 'success');
+      // 3. Delete draft from sheet in background (non-blocking)
+      deleteDraftFromSheet(latestDraft.id).catch(err => {
+        console.warn("Background draft delete warning:", err.message);
+      });
 
-        const originalDraft = drafts.find(d => d.id === draftToConvert.id);
-        if (originalDraft) {
-          addDebugMessage(`Deleting draft ${draftToConvert.id} from Google Sheets...`, 'info');
-          const deleted = await deleteDraftFromSheet(draftToConvert.id);
+      // 4. Update UI immediately
+      setDrafts(prev => prev.filter(d => d.id !== draftToConvert.id));
+      setLocalEditedDrafts(prev => {
+        const newState = { ...prev };
+        delete newState[draftToConvert.id];
+        return newState;
+      });
 
-          if (deleted) {
-            addDebugMessage(`Draft deleted successfully`, 'success');
-          } else {
-            addDebugMessage(`Warning: Draft may not have been deleted`, 'warning');
-          }
-        }
+      setShowSuccessAnimation(true);
 
-        setDrafts(prev => prev.filter(d => d.id !== draftToConvert.id));
-        setLocalEditedDrafts(prev => {
-          const newState = { ...prev };
-          delete newState[draftToConvert.id];
-          return newState;
-        });
-
-        setShowSuccessAnimation(true);
-        setTimeout(() => setShowSuccessAnimation(false), 2000);
-
-        if (onConvertToDispatch) {
-          onConvertToDispatch(finalBillData);
-        }
-
-        setSelectedDraft(null);
-        setDraftToConvert(null);
-
-        showToast(`Converted to final bill ${billNumber}! Saved to server & PDF downloaded.`, "success");
-
-      } else {
-        throw new Error("Failed to save final bill");
+      if (onConvertToDispatch) {
+        onConvertToDispatch(finalBillData);
       }
+
+      setSelectedDraft(null);
+      showToast(`Converted to final bill ${billNumber}! Saved to server & PDF downloaded.`, "success");
+
+      // Short 600ms delay for visual success checkmark before closing loading overlay
+      await new Promise(resolve => setTimeout(resolve, 600));
 
     } catch (error) {
       console.error("Error converting draft:", error);
       addDebugMessage(`Conversion error: ${error.message}`, 'error');
       showToast("Error converting draft: " + error.message, "error");
     } finally {
+      setShowSuccessAnimation(false);
       setSavingToSheet(false);
       setProcessingStage(null);
       setDraftToConvert(null);
+      setIsConverting(false);
     }
   };
 
   // ==================== PDF GENERATION FUNCTION ====================
 
+  const generateDraftPDF = async (draftData) => {
+    if (!draftData || !draftData.items || draftData.items.length === 0) {
+      console.error("Invalid draft data");
+      return false;
+    }
+
+    try {
+      const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const leftMargin = 15;
+      const rightMargin = 15;
+      const contentWidth = pageWidth - leftMargin - rightMargin;
+
+      const uniqueLots = new Set(draftData.items.map(item => item.lotNumber)).size;
+      const totalItems = draftData.items.length;
+      const totalQuantity = draftData.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+      const totalSets = draftData.items.reduce((sum, item) => sum + (parseInt(item.sets) || 0), 0);
+
+      const MAX_ROWS_PER_PAGE = 12;
+
+      const drawPageBorder = () => {
+        doc.setLineWidth(0.5);
+        doc.rect(5, 5, pageWidth - 10, pageHeight - 10);
+        doc.setLineWidth(0.3);
+      };
+
+      const drawHeader = (yPos) => {
+        // DRAFT WATERMARK BACKGROUND
+        doc.setFont("times", "bold");
+        doc.setFontSize(60);
+        doc.setTextColor(200, 200, 200);
+        doc.text("DRAFT", pageWidth / 2, pageHeight / 2, { align: "center", angle: 45 });
+        doc.setTextColor(0, 0, 0);
+
+        // Main title
+        doc.setFont("times", "bold");
+        doc.setFontSize(26);
+        doc.text("Packing List (DRAFT)", pageWidth / 2, yPos, { align: "center" });
+        yPos += 10;
+
+        // DRAFT warning
+        doc.setFontSize(12);
+        doc.setTextColor(255, 0, 0);
+        doc.text("*** DRAFT DOCUMENT - NOT FOR DISPATCH ***", pageWidth / 2, yPos, { align: "center" });
+        doc.setTextColor(0, 0, 0);
+        yPos += 8;
+
+        // Add Bill To information
+        const partyName = draftData.partyName || 'N/A';
+        const maxWidth = contentWidth;
+
+        doc.setFont("times", "bold");
+        doc.setFontSize(14);
+        doc.setTextColor(0, 0, 0);
+
+        if (doc.getTextWidth(partyName) > maxWidth) {
+          let remainingName = partyName;
+          let lines = [];
+
+          while (remainingName.length > 0) {
+            let line = "";
+            for (let i = 0; i < remainingName.length; i++) {
+              const testLine = line + remainingName[i];
+              if (doc.getTextWidth(testLine) <= maxWidth) {
+                line = testLine;
+              } else {
+                break;
+              }
+            }
+            lines.push(line);
+            remainingName = remainingName.substring(line.length);
+          }
+
+          for (let i = 0; i < lines.length; i++) {
+            doc.text(lines[i], pageWidth / 2, yPos, { align: "center" });
+            yPos += 7;
+          }
+          yPos += 3;
+        } else {
+          doc.text(partyName, pageWidth / 2, yPos, { align: "center" });
+          yPos += 6;
+        }
+
+        // Draw the main box
+        const boxHeight = 45;
+        doc.rect(leftMargin, yPos, contentWidth, boxHeight);
+
+        const midPoint = leftMargin + (contentWidth / 2);
+        doc.line(midPoint, yPos, midPoint, yPos + boxHeight);
+
+        // LEFT SIDE CONTENT
+        const leftLabelX = leftMargin + 5;
+        const leftValueX = leftMargin + 42;
+        const leftMaxWidth = midPoint - leftValueX - 3;
+
+        doc.setFont("times", "bold");
+        doc.setFontSize(10);
+
+        doc.text("Date", leftLabelX, yPos + 7);
+        doc.text(":", leftLabelX + 20, yPos + 7);
+        doc.setFont("times", "normal");
+        doc.text(`${draftData.billDate || draftData.dispatchDate || new Date().toLocaleDateString()}`, leftValueX, yPos + 7);
+
+        doc.setFont("times", "bold");
+        doc.text("Order Ref", leftLabelX, yPos + 14);
+        doc.text(":", leftLabelX + 20, yPos + 14);
+        doc.setFont("times", "normal");
+        let orderRef = `${draftData.orderReference || draftData.orderNo || 'N/A'}`;
+        if (doc.getTextWidth(orderRef) > leftMaxWidth) {
+          orderRef = orderRef.substring(0, 20) + "...";
+        }
+        doc.text(orderRef, leftValueX, yPos + 14);
+
+        doc.setFont("times", "bold");
+        doc.text("Doc No", leftLabelX, yPos + 21);
+        doc.text(":", leftLabelX + 20, yPos + 21);
+        doc.setFont("times", "normal");
+        doc.text(`${draftData.packingNumber || draftData.billNumber || draftData.id || 'N/A'}`, leftValueX, yPos + 21);
+
+        doc.setFont("times", "bold");
+        doc.text("Generated By", leftLabelX, yPos + 28);
+        doc.text(":", leftLabelX + 20, yPos + 28);
+        doc.setFont("times", "normal");
+        const preparedByText = `${draftData.preparedBy || preparedBy}`;
+        const preparedByRole = `${draftData.preparedByRole || userRole}`;
+        const fullPreparedText = `${preparedByText} (${preparedByRole})`;
+
+        if (doc.getTextWidth(fullPreparedText) > leftMaxWidth) {
+          doc.text(preparedByText, leftValueX, yPos + 28);
+          doc.text(`(${preparedByRole})`, leftValueX, yPos + 35);
+        } else {
+          doc.text(fullPreparedText, leftValueX, yPos + 28);
+        }
+
+        doc.setFont("times", "bold");
+        doc.text("Document Status", leftLabelX, yPos + 35);
+        doc.text(":", leftLabelX + 20, yPos + 35);
+        doc.setFont("times", "bold");
+        doc.setTextColor(255, 0, 0);
+        doc.text("DRAFT", leftValueX, yPos + 35);
+        doc.setTextColor(0, 0, 0);
+
+        // RIGHT SIDE CONTENT
+        const rightLabelX = midPoint + 5;
+        const rightValueX = midPoint + 40;
+
+        doc.setFont("times", "bold");
+        doc.setFontSize(10);
+
+        doc.text("Total Lots", rightLabelX, yPos + 7);
+        doc.text(":", rightLabelX + 20, yPos + 7);
+        doc.setFont("times", "normal");
+        doc.text(uniqueLots.toString(), rightValueX, yPos + 7);
+
+        doc.setFont("times", "bold");
+        doc.text("Total Items", rightLabelX, yPos + 14);
+        doc.text(":", rightLabelX + 20, yPos + 14);
+        doc.setFont("times", "normal");
+        doc.text(totalItems.toString(), rightValueX, yPos + 14);
+
+        doc.setFont("times", "bold");
+        doc.text("Total Qty", rightLabelX, yPos + 21);
+        doc.text(":", rightLabelX + 20, yPos + 21);
+        doc.setFont("times", "normal");
+        doc.text(`${totalQuantity} PCS`, rightValueX, yPos + 21);
+
+        doc.setFont("times", "bold");
+        doc.text("Total Sets", rightLabelX, yPos + 28);
+        doc.text(":", rightLabelX + 20, yPos + 28);
+        doc.setFont("times", "normal");
+        doc.text(totalSets.toString(), rightValueX, yPos + 28);
+
+        doc.setFont("times", "bold");
+        doc.text("Document Type", rightLabelX, yPos + 35);
+        doc.text(":", rightLabelX + 20, yPos + 35);
+        doc.setFont("times", "bold");
+        doc.setTextColor(255, 0, 0);
+        doc.text("DRAFT COPY", rightValueX, yPos + 35);
+        doc.setTextColor(0, 0, 0);
+
+        return yPos + boxHeight + 8;
+      };
+
+      const drawTableHeader = (yPos) => {
+        const tableColumns = [
+          { header: "S.No", width: 10 },
+          { header: "Lot Number", width: 20 },
+          { header: "Brand", width: 25 },
+          { header: "Description", width: 50 },
+          { header: "Sets", width: 17 },
+          { header: "Pc/Set", width: 17 },
+          { header: "Loose Pc", width: 17 },
+          { header: "Total Qty", width: 23 }
+        ];
+
+        doc.setFont("times", "bold");
+        doc.setFontSize(11);
+        doc.setFillColor(240, 240, 240);
+        doc.rect(leftMargin, yPos, contentWidth, 12, 'F');
+        doc.rect(leftMargin, yPos, contentWidth, 12);
+
+        let currentX = leftMargin;
+        tableColumns.forEach(col => {
+          const textWidth = doc.getTextWidth(col.header);
+          const textX = currentX + (col.width / 2) - (textWidth / 2);
+          doc.text(col.header, textX, yPos + 8);
+          currentX += col.width;
+          if (currentX < pageWidth - rightMargin) {
+            doc.line(currentX, yPos, currentX, yPos + 12);
+          }
+        });
+
+        return yPos + 12;
+      };
+
+      const drawTableRow = (item, index, yPos) => {
+        const tableColumns = [
+          { width: 10 }, { width: 20 }, { width: 25 }, { width: 50 },
+          { width: 17 }, { width: 17 }, { width: 17 }, { width: 23 }
+        ];
+
+        const rowHeight = 12;
+        doc.rect(leftMargin, yPos, contentWidth, rowHeight);
+
+        let colX = leftMargin;
+        tableColumns.forEach(col => {
+          colX += col.width;
+          if (colX < pageWidth - rightMargin) {
+            doc.line(colX, yPos, colX, yPos + rowHeight);
+          }
+        });
+
+        const values = [
+          (index + 1).toString(),
+          item.lotNumber || "",
+          item.brand || "",
+          (() => {
+            let description = item.name || item.description || "";
+            const maxChars = 33;
+            if (description.length > maxChars) {
+              description = description.substring(0, maxChars - 3) + "...";
+            }
+            return description;
+          })(),
+          (item.sets || 0).toString(),
+          (item.setsPerPcs || 0).toString(),
+          (item.loosePcs || 0).toString(),
+          (item.quantity || 0).toString()
+        ];
+
+        doc.setFont("times", "normal");
+        doc.setFontSize(10);
+
+        let textX = leftMargin;
+        values.forEach((value, colIndex) => {
+          const textWidth = doc.getTextWidth(value);
+          const textXPos = textX + (tableColumns[colIndex].width / 2) - (textWidth / 2);
+          doc.text(value, textXPos, yPos + 8);
+          textX += tableColumns[colIndex].width;
+        });
+
+        return rowHeight;
+      };
+
+      const drawTableFooter = (yPos, isLastPage) => {
+        yPos += 5;
+        doc.setLineWidth(0.5);
+        doc.line(leftMargin, yPos, leftMargin + contentWidth, yPos);
+
+        if (isLastPage) {
+          doc.setFontSize(9);
+          doc.setTextColor(100, 100, 100);
+          doc.text("*** DRAFT DOCUMENT - NOT VALID FOR DISPATCH ***", pageWidth / 2, yPos + 7, { align: "center" });
+          doc.setTextColor(0, 0, 0);
+        }
+
+        return yPos + 18;
+      };
+
+      const drawSignatures = (yPos) => {
+        const footerY = pageHeight - 25;
+        doc.setFont("times", "bold");
+        doc.setFontSize(10);
+
+        doc.setLineWidth(0.3);
+
+        const sectionWidth = (contentWidth - 20) / 4;
+        let currentX = leftMargin;
+
+        doc.text("Prepared By", currentX + 5, footerY);
+        doc.line(currentX + 5, footerY + 3, currentX + sectionWidth - 5, footerY + 3);
+        doc.setFontSize(8);
+        doc.text(`${draftData.preparedBy || preparedBy} (${draftData.preparedByRole || userRole})`, currentX + 5, footerY + 9);
+
+        currentX += sectionWidth;
+        doc.setFontSize(10);
+        doc.text("Account Officer", currentX + 5, footerY);
+        doc.line(currentX + 5, footerY + 3, currentX + sectionWidth - 5, footerY + 3);
+        doc.setFontSize(8);
+        doc.text("(Name & Signature)", currentX + 5, footerY + 9);
+
+        currentX += sectionWidth;
+        doc.setFontSize(10);
+        doc.text("Checked By", currentX + 5, footerY);
+        doc.line(currentX + 5, footerY + 3, currentX + sectionWidth - 5, footerY + 3);
+        doc.setFontSize(8);
+        doc.text("(Name & Signature)", currentX + 5, footerY + 9);
+
+        currentX += sectionWidth;
+        doc.setFontSize(10);
+        doc.text("Authorized Signatory", currentX + 5, footerY);
+        doc.line(currentX + 5, footerY + 3, pageWidth - rightMargin - 5, footerY + 3);
+        doc.setFontSize(8);
+        doc.text("(Name & Signature)", currentX + 5, footerY + 9);
+
+        doc.setFontSize(8);
+        doc.setTextColor(150, 150, 150);
+        doc.text("DRAFT COPY - For review only", pageWidth / 2, footerY - 18, { align: "center" });
+        doc.setTextColor(0, 0, 0);
+      };
+
+      // Generate pages
+      let itemsProcessed = 0;
+      let pageCount = 0;
+
+      while (itemsProcessed < draftData.items.length) {
+        const remainingRows = draftData.items.length - itemsProcessed;
+        const rowsOnThisPage = Math.min(MAX_ROWS_PER_PAGE, remainingRows);
+        const isLastPage = (itemsProcessed + rowsOnThisPage) === draftData.items.length;
+
+        let yPos = 15;
+
+        if (pageCount > 0) {
+          doc.addPage();
+        }
+
+        drawPageBorder();
+        yPos = drawHeader(yPos);
+        yPos = drawTableHeader(yPos);
+
+        for (let i = 0; i < rowsOnThisPage; i++) {
+          const item = draftData.items[itemsProcessed];
+          const rowHeight = drawTableRow(item, itemsProcessed, yPos);
+          yPos += rowHeight;
+          itemsProcessed++;
+        }
+
+        yPos = drawTableFooter(yPos, isLastPage);
+
+        if (isLastPage) {
+          drawSignatures(yPos);
+        } else {
+          yPos += 5;
+          doc.setFontSize(9);
+          doc.setTextColor(100, 100, 100);
+          doc.text("... continued on next page", pageWidth / 2, yPos, { align: "center" });
+          doc.setTextColor(0, 0, 0);
+        }
+
+        pageCount++;
+      }
+
+      // Add page numbers
+      const totalPages = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(9);
+        doc.setTextColor(100, 100, 100);
+        doc.text(
+          `Page ${i} of ${totalPages} - DRAFT`,
+          pageWidth / 2,
+          pageHeight - 10,
+          { align: "center" }
+        );
+        doc.setTextColor(0, 0, 0);
+      }
+
+      const docNumber = draftData.packingNumber || draftData.billNumber || draftData.id || 'DRAFT';
+      const fileName = `DRAFT_${docNumber}_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(fileName);
+      return true;
+    } catch (error) {
+      console.error("Draft PDF Generation Error:", error);
+      return false;
+    }
+  };
+
   const generatePackingListPDF = async (packingData) => {
     if (!packingData || !packingData.items || packingData.items.length === 0) {
       console.error("Invalid packing data");
       return false;
+    }
+
+    const isDraft = packingData.status === 'DRAFT' || packingData.documentType === 'DRAFT';
+    if (isDraft) {
+      return await generateDraftPDF(packingData);
     }
 
     try {
@@ -1677,13 +2082,13 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
               { header: "S.No", width: 8 },
               { header: "Part No.", width: 16 },
               { header: "Lot No", width: 15 },
-              { header: "Brand", width: 20 },
-              { header: "Item Description", width: 42 },
+              { header: "Brand", width: 28 },
+              { header: "Item Description", width: 46 },
               { header: "Sets", width: 14 },
               { header: "Pc/Set", width: 14 },
               { header: "Loose Pc", width: 15 },
-              { header: "Total Qty", width: 16 },
-              { header: "Check", width: 10 }
+              { header: "Total Qty", width: 18 },
+              { header: "Check", width: 6 }
             ];
           } else {
             tableColumns = [
@@ -1841,12 +2246,12 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
             let setsX, setsW, looseX, looseW, qtyX, qtyW;
 
             if (docType.name === "Account") {
-              setsX = leftMargin + 8 + 16 + 15 + 20 + 42; // 131
+              setsX = leftMargin + 8 + 16 + 15 + 28 + 46;
               setsW = 14;
-              looseX = setsX + 14 + 14; // 159
+              looseX = setsX + 14 + 14;
               looseW = 15;
-              qtyX = looseX + 15; // 174
-              qtyW = 16;
+              qtyX = looseX + 15;
+              qtyW = 18;
             } else {
               setsX = leftMargin + 9 + 20 + 24 + 57; // 125
               setsW = 17;
@@ -2146,31 +2551,38 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
   };
 
   const renderDraftSavingOverlay = () => {
-    if (!savingToSheet && !processingStage) return null;
+    if (!savingToSheet && !processingStage && !showSuccessAnimation && !isConverting) return null;
 
     let title = "Syncing Draft Record";
     let subtitle = "Writing bill entries & lot items to server...";
     let stagePercent = 50;
-    const isConversion = processingStage?.startsWith('converting') || (processingStage === 'pdf' && draftToConvert);
+    const isConversion = isConverting || processingStage?.startsWith('converting') || (processingStage === 'pdf' && draftToConvert);
     const isUpdatingDraft = processingStage?.startsWith('updating') || (isEditingExisting && (processingStage === 'sheet' || savingToSheet));
 
-    if (processingStage === 'converting' || processingStage === 'converting_sheet') {
+    if (isConversion || processingStage === 'converting') {
       title = "Converting Draft to Final Bill";
-      subtitle = "Saving final bill & updating server records...";
-      stagePercent = 50;
+      subtitle = "Converting DRAFT bill to FINAL bill & updating server records...";
+      stagePercent = 35;
+    }
+    if (processingStage === 'converting_sheet') {
+      title = "Saving Final Bill to Server";
+      subtitle = "Creating final bill entries and clearing draft from server...";
+      stagePercent = 65;
+    } else if (processingStage === 'pdf') {
+      title = isConversion ? "Generating Final Bill PDF" : (isUpdatingDraft ? "Generating Updated Draft PDF" : "Generating Bill Document");
+      subtitle = isConversion ? "Formatting layout & downloading final bill PDF..." : "Formatting layout & creating invoice PDF...";
+      stagePercent = 85;
     } else if (processingStage === 'updating_sheet' || isUpdatingDraft) {
       title = "Updating Draft Record";
       subtitle = "Saving updated items & lot quantities to cloud server...";
       stagePercent = 60;
-    } else if (processingStage === 'pdf') {
-      title = isConversion ? "Generating Final Bill PDF" : (isUpdatingDraft ? "Generating Updated Draft PDF" : "Generating Bill Document");
-      subtitle = isConversion ? "Formatting layout & downloading invoice PDF..." : "Formatting layout & creating invoice PDF...";
-      stagePercent = 85;
     } else if (processingStage === 'sheet' || savingToSheet) {
       title = isEditingExisting ? "Updating Draft Record" : "Saving New Draft Record";
       subtitle = "Securing items & lot quantities to cloud server...";
       stagePercent = 85;
-    } else if (showSuccessAnimation || processingStage === 'complete') {
+    }
+
+    if (showSuccessAnimation || processingStage === 'complete') {
       title = isConversion ? "Final Bill Created Successfully!" : (isUpdatingDraft ? "Draft Updated Successfully!" : "Draft Saved Successfully!");
       subtitle = isConversion ? "Final bill saved & draft removed from server." : "All items & draft data synced with server.";
       stagePercent = 100;
@@ -2274,11 +2686,11 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
             color: '#64748b',
             padding: '0 8px'
           }}>
-            <span style={{ color: (processingStage === 'updating_sheet' || processingStage === 'converting' || processingStage === 'converting_sheet' || processingStage === 'pdf' || showSuccessAnimation) ? (processingStage === 'pdf' || showSuccessAnimation ? '#10b981' : '#2563eb') : '#94a3b8' }}>
-              {(processingStage === 'pdf' || showSuccessAnimation) ? (isUpdatingDraft ? '✓ Draft Updated' : '✓ Server Saved') : '1. Server Update'}
+            <span style={{ color: (processingStage === 'updating_sheet' || processingStage === 'converting' || processingStage === 'converting_sheet' || processingStage === 'pdf' || showSuccessAnimation || isConversion) ? (processingStage === 'pdf' || showSuccessAnimation ? '#10b981' : '#2563eb') : '#94a3b8' }}>
+              {(processingStage === 'pdf' || showSuccessAnimation) ? (isConversion ? '✓ Bill Saved' : (isUpdatingDraft ? '✓ Draft Updated' : '✓ Server Saved')) : (isConversion ? '1. Saving Bill to Server' : '1. Server Update')}
             </span>
             <span style={{ color: processingStage === 'pdf' ? '#2563eb' : showSuccessAnimation ? '#10b981' : '#94a3b8' }}>
-              {showSuccessAnimation ? '✓ PDF Downloaded' : '2. PDF Download'}
+              {showSuccessAnimation ? '✓ PDF Downloaded' : (isConversion ? '2. PDF Download' : '2. PDF Download')}
             </span>
           </div>
 
@@ -2646,6 +3058,8 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
   return (
     <div className="draft-packing-container">
 
+      {renderDraftSavingOverlay()}
+
       {showConfirmModal && <ConfirmConversionModal />}
 
       <div className="user-info-bar">
@@ -2803,6 +3217,11 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
       {isCreating && renderForm()}
 
       <style jsx>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+
         .lot-suggestions-dropdown {
           position: absolute;
           top: 100%;
