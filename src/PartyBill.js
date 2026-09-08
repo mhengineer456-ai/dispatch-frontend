@@ -526,10 +526,10 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
       console.error("❌ Error saving to Google Sheets:", error);
       addDebugMessage(`❌ Failed to save: ${error.message}`, 'error');
       showToast(`Failed to save: ${error.message}`, "error");
+      setProcessingStage(null);
       return false;
     } finally {
       setSavingToSheet(false);
-      setProcessingStage(null);
     }
   };
   // NEW FUNCTION: Save bill as draft
@@ -583,10 +583,10 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
       console.error("❌ Error saving draft:", error);
       addDebugMessage(`❌ Failed to save draft: ${error.message}`, 'error');
       showToast("Failed to save draft", "error");
+      setProcessingStage(null);
       return false;
     } finally {
       setSavingToSheet(false);
-      if (processingStage === 'sheet') setProcessingStage(null);
     }
   };
   // DraftSavingOverlay component extracted to module scope
@@ -693,68 +693,78 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
       // 🔍 DEBUG: Log complete draft data
       console.log("📤 Draft data being saved:", JSON.stringify(draftData, null, 2));
 
-      // Generate DRAFT PDF
+      // 1. Save to Database / Sheet first
+      addDebugMessage(`Saving draft data to database/sheet...`, 'info');
+      setProcessingStage('sheet');
+      const saved = await saveBillToDraftSheet(draftData);
+
+      if (!saved) {
+        throw new Error('Save operation failed on server');
+      }
+
+      // 2. Generate and download DRAFT PDF only after successful save
+      setSavingToSheet(false);
+      setGeneratingPDF(true);
+      setProcessingStage('pdf');
       addDebugMessage(`Generating DRAFT PDF...`, 'info');
       const pdfGenerated = await generateDraftPDF(draftData);
 
       if (!pdfGenerated) {
-        throw new Error('Failed to generate DRAFT PDF');
+        addDebugMessage(`Warning: Draft was saved, but PDF generation failed`, 'warning');
       }
 
-      // Save to Google Sheets
-      addDebugMessage(`Saving draft data to sheet...`, 'info');
-      const saved = await saveBillToDraftSheet(draftData);
+      // 3. Mark complete & cleanup
+      addDebugMessage(`✅ Draft saved successfully: ${draftNumber}`, 'success');
+      setShowSuccessAnimation(true);
+      setProcessingStage('complete');
 
-      if (saved) {
-        addDebugMessage(`✅ Draft saved successfully: ${draftNumber}`, 'success');
+      setTimeout(() => {
+        setShowSuccessAnimation(false);
+        setProcessingStage(null);
+        setGeneratingPDF(false);
+      }, 2000);
 
-        setShowSuccessAnimation(true);
-        setTimeout(() => setShowSuccessAnimation(false), 2000);
+      if (onSubmit) onSubmit(draftData);
 
-        if (onSubmit) onSubmit(draftData);
+      // Reset form after saving draft
+      setBillForm({
+        partyName: selectedParty?.name || "",
+        billDate: new Date().toISOString().split('T')[0],
+        dueDate: "",
+        items: [],
+        notes: ""
+      });
 
-        // Reset form after saving draft
-        setBillForm({
-          partyName: selectedParty?.name || "",
-          billDate: new Date().toISOString().split('T')[0],
-          dueDate: "",
-          items: [],
-          notes: ""
-        });
+      if (!selectedParty) setSelectedPartyState(null);
 
-        if (!selectedParty) setSelectedPartyState(null);
+      setCurrentProduct({
+        barcode: "", lotNumber: "", sets: "", setsPerPcs: "", loosePcs: 0,
+        looseOperation: "add",
+        brand: "", item: "", quantity: 1, totalPieces: "",
+        colors: [], sizes: [], sizeQuantities: {}, colorDetails: {},
+        partNo: "", rate: ""
+      });
 
-        setCurrentProduct({
-          barcode: "", lotNumber: "", sets: "", setsPerPcs: "", loosePcs: 0,
-          looseOperation: "add",
-          brand: "", item: "", quantity: 1, totalPieces: "",
-          colors: [], sizes: [], sizeQuantities: {}, colorDetails: {},
-          partNo: "", rate: ""
-        });
+      setTempBillDataForDraft(null);
+      setTempBillData(null);
+      setIsEditingExistingDraft(false);
+      setExistingDraftNumber(null);
 
-        setTempBillDataForDraft(null);
-        setTempBillData(null);
-        setIsEditingExistingDraft(false);
-        setExistingDraftNumber(null);
+      showToast(`Draft ${draftNumber} saved to database and PDF downloaded!`, 'success');
 
-        showToast(`Draft ${draftNumber} saved and PDF generated!`, 'success');
+      if (barcodeInputRef.current) barcodeInputRef.current.focus();
+      await fetchLotSummary();
 
-        if (barcodeInputRef.current) barcodeInputRef.current.focus();
-        await fetchLotSummary();
-
-        setIsConfirmModalOpen(false);
-
-      } else {
-        throw new Error('Save operation returned false');
-      }
+      setIsConfirmModalOpen(false);
 
     } catch (error) {
       console.error("❌ Error in handleSaveAsDraft:", error);
       addDebugMessage(`❌ Draft save failed: ${error.message}`, 'error');
       showToast(`Failed to save draft: ${error.message}`, "error");
-    } finally {
-      setSavingToSheet(false);
       setProcessingStage(null);
+      setGeneratingPDF(false);
+      setSavingToSheet(false);
+    } finally {
       setIsProcessingDraft(false);
     }
   };
@@ -1142,18 +1152,11 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
       const fileName = `DRAFT_${draftData.packingNumber}_${new Date().toISOString().split('T')[0]}.pdf`;
       doc.save(fileName);
 
-      setProcessingStage(null);
       return true;
 
     } catch (error) {
       console.error("Draft PDF Generation Error:", error);
-      setProcessingStage('error');
       return false;
-    } finally {
-      setTimeout(() => {
-        setGeneratingPDF(false);
-        setProcessingStage(null);
-      }, 500);
     }
   };
 
@@ -1175,8 +1178,10 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
     console.log("🔍 First item Rate:", tempBillData.items[0]?.rate);
     addDebugMessage(`📊 Processing ${tempBillData.items.length} items for final submission`, 'info');
 
-    setGeneratingPDF(true);
-    setProcessingStage('pdf');
+    // 1. Show Database Saving Loading State First
+    setSavingToSheet(true);
+    setGeneratingPDF(false);
+    setProcessingStage('sheet');
 
     try {
       const packingNumber = await getNextPackingNumber('PL');
@@ -1231,25 +1236,28 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
 
       // 🔍 DEBUG: Log complete data being sent
       console.log("📤 Sending to server:", JSON.stringify(packingDataForStorage, null, 2));
-      addDebugMessage(`📤 Sending ${packingDataForStorage.items.length} items to server`, 'info');
+      addDebugMessage(`📤 Saving ${packingDataForStorage.items.length} items to database...`, 'info');
 
-      // Generate PDF first
-      setProcessingStage('pdf');
-      const pdfGenerated = await generatePackingList(packingDataForStorage);
-
-      if (!pdfGenerated) {
-        throw new Error('PDF generation failed');
-      }
-
-      // Then save to sheet
-      setProcessingStage('sheet');
+      // 2. STORE IN DATABASE FIRST
       const saved = await saveBillToGoogleSheet(packingDataForStorage);
 
       if (!saved) {
-        throw new Error('Failed to save to Google Sheets');
+        throw new Error('Failed to save bill to database / Google Sheets');
       }
 
-      // Success animation and cleanup
+      // 3. ONLY AFTER SUCCESSFUL STORAGE: GENERATE & DOWNLOAD PDF
+      setSavingToSheet(false);
+      setGeneratingPDF(true);
+      setProcessingStage('pdf');
+      addDebugMessage(`✅ Stored in database! Generating & downloading PDF...`, 'success');
+
+      const pdfGenerated = await generatePackingList(packingDataForStorage);
+
+      if (!pdfGenerated) {
+        throw new Error('Bill was saved in database, but PDF generation failed');
+      }
+
+      // 4. Success animation and cleanup
       setShowSuccessAnimation(true);
       setProcessingStage('complete');
 
@@ -1283,7 +1291,7 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
       setTempBillData(null);
       setTempBillDataForDraft(null);
 
-      showToast(`Packing list ${packingNumber} generated and email sent!`, 'success');
+      showToast(`Bill ${packingNumber} saved to database and PDF downloaded!`, 'success');
 
       if (barcodeInputRef.current) barcodeInputRef.current.focus();
       await fetchLotSummary();
@@ -1296,6 +1304,7 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
       showToast(`Failed to save: ${error.message}`, "error");
       setProcessingStage(null);
       setGeneratingPDF(false);
+      setSavingToSheet(false);
     }
   };
   // ==================== LOT DETAILS FUNCTIONS ====================
@@ -2722,9 +2731,10 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
       return;
     }
 
-    // Show loading (don't set timeout to auto-clear)
-    setGeneratingPDF(true);
-    setProcessingStage('pdf');
+    // 1. Show Database Saving Loading State First
+    setSavingToSheet(true);
+    setGeneratingPDF(false);
+    setProcessingStage('sheet');
 
     try {
       // Use 'PL' prefix for Final Bills (Packing List)
@@ -2792,22 +2802,25 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
         documentType: 'FINAL'
       };
 
-      // Switch to sheet saving stage
-      setProcessingStage('sheet');
+      // 2. STORE IN DATABASE FIRST
+      const saved = await saveBillToGoogleSheet(packingDataForStorage);
+
+      if (!saved) {
+        throw new Error('Failed to save bill to database / Google Sheets');
+      }
+
+      // 3. ONLY AFTER SUCCESSFUL STORAGE: GENERATE & DOWNLOAD PDF
+      setSavingToSheet(false);
+      setGeneratingPDF(true);
+      setProcessingStage('pdf');
 
       const pdfGenerated = await generatePackingList(packingDataForStorage);
 
       if (!pdfGenerated) {
-        throw new Error('PDF generation failed');
+        throw new Error('Bill saved to database, but PDF generation failed');
       }
 
-      const saved = await saveBillToGoogleSheet(packingDataForStorage);
-
-      if (!saved) {
-        throw new Error('Failed to save to Google Sheets');
-      }
-
-      // Only if everything succeeded
+      // 4. Success animation and cleanup
       setShowSuccessAnimation(true);
       setProcessingStage('complete');
 
@@ -3333,18 +3346,11 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
       const fileName = `${sanitizedPartyName}_PackingList_${packingData.packingNumber}_${new Date().toISOString().split('T')[0]}.pdf`;
       doc.save(fileName);
 
-      setProcessingStage(null);
       return true;
 
     } catch (error) {
       console.error("PDF Generation Error:", error);
-      setProcessingStage('error');
       return false;
-    } finally {
-      setTimeout(() => {
-        setGeneratingPDF(false);
-        setProcessingStage(null);
-      }, 500);
     }
   };
   useEffect(() => {
@@ -4711,17 +4717,17 @@ const DraftSavingOverlay = React.memo(({ savingToSheet, generatingPDF, processin
   let subtitle = "Syncing data with server...";
   let stagePercent = 30;
 
-  if (processingStage === 'pdf' || generatingPDF) {
-    title = isDraft ? "Generating Draft Document" : "Generating Packing List PDF";
-    subtitle = "Formatting invoice layout & preparing document...";
-    stagePercent = 45;
-  } else if (processingStage === 'sheet' || savingToSheet) {
-    title = isDraft ? "Saving Draft Record" : "Syncing to Cloud Database";
-    subtitle = "Writing bill entries & lot items to server...";
+  if (processingStage === 'sheet' || (savingToSheet && processingStage !== 'pdf')) {
+    title = isDraft ? "Saving Draft to Database..." : "1. Saving Bill to Database...";
+    subtitle = "Storing dispatch records & lot items in server database...";
+    stagePercent = 50;
+  } else if (processingStage === 'pdf' || generatingPDF) {
+    title = isDraft ? "Generating Draft PDF..." : "2. Generating & Downloading PDF...";
+    subtitle = "✓ Stored in database! Preparing document download...";
     stagePercent = 85;
   } else if (processingStage === 'complete') {
-    title = "Submission Complete!";
-    subtitle = "All records saved & email notification dispatched.";
+    title = "Saved & Downloaded Successfully!";
+    subtitle = "All records stored in database and PDF downloaded.";
     stagePercent = 100;
   }
 
@@ -4823,11 +4829,11 @@ const DraftSavingOverlay = React.memo(({ savingToSheet, generatingPDF, processin
           color: '#64748b',
           padding: '0 8px'
         }}>
-          <span style={{ color: (processingStage === 'pdf' || generatingPDF) ? '#2563eb' : (processingStage === 'sheet' || processingStage === 'complete') ? '#10b981' : '#94a3b8' }}>
-            {(processingStage === 'sheet' || processingStage === 'complete') ? '✓ PDF Ready' : '1. PDF Layout'}
+          <span style={{ color: (processingStage === 'pdf' || processingStage === 'complete') ? '#10b981' : (processingStage === 'sheet' || savingToSheet) ? '#2563eb' : '#94a3b8' }}>
+            {(processingStage === 'pdf' || processingStage === 'complete') ? '✓ 1. Database Saved' : '1. Database Storage'}
           </span>
-          <span style={{ color: (processingStage === 'sheet' || savingToSheet) ? '#2563eb' : processingStage === 'complete' ? '#10b981' : '#94a3b8' }}>
-            {processingStage === 'complete' ? '✓ Server Synced' : '2. Storage Sync'}
+          <span style={{ color: processingStage === 'complete' ? '#10b981' : (processingStage === 'pdf' || generatingPDF) ? '#2563eb' : '#94a3b8' }}>
+            {processingStage === 'complete' ? '✓ 2. PDF Downloaded' : '2. PDF Download'}
           </span>
         </div>
 
