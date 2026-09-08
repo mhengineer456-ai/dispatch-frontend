@@ -607,28 +607,24 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
         isUpdate: false
       };
 
-      setSavingToSheet(true);
-      setProcessingStage('sheet');
-
-      // 1. Save to Express Backend & Google Sheets FIRST
-      addDebugMessage(`Saving draft ${newDraftNumber} to database/sheet...`, 'info');
-      await saveDraftToGoogleSheets(newDraft, false);
-
-      // 2. Generate & Download Draft PDF only after successful storage
-      setProcessingStage('pdf');
+      // 1. Generate & Download Draft PDF immediately
       addDebugMessage(`Generating PDF for draft ${newDraftNumber}...`, 'info');
       await generatePackingListPDF(newDraft);
 
-      // 3. Update local React state
+      // 2. Update local React state immediately
       setDrafts(prev => [newDraft, ...prev]);
       updateLocalDraft(newDraftNumber, newDraft);
 
-      // 4. Reset form & close modal
+      // 3. Reset form & close modal immediately
       resetForm();
       setIsCreating(false);
       setIsEditingExisting(false);
-      showToast(`Draft ${newDraftNumber} saved to database & PDF downloaded!`, "success");
-      loadDraftsFromSheet().catch(() => {});
+      showToast(`Draft ${newDraftNumber} created & PDF downloaded!`, "success");
+
+      // 4. Save to Express Backend & Google Sheets in background (non-blocking)
+      saveDraftToGoogleSheets(newDraft, false).then(() => {
+        loadDraftsFromSheet().catch(() => {});
+      }).catch(err => console.warn("Background draft save warning:", err.message));
 
     } catch (err) {
       console.error("Error creating draft:", err);
@@ -644,7 +640,7 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
 
     try {
       setSavingToSheet(true);
-      setProcessingStage('sheet');
+      setProcessingStage('pdf');
 
       const totalQuantity = draftForm.items.reduce((sum, item) => {
         const quantity = parseInt(item.quantity) || 0;
@@ -687,25 +683,24 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
         isUpdate: true
       };
 
-      // 1. Save to Express Backend & Google Sheets FIRST
-      addDebugMessage(`Updating draft ${selectedDraft.id} in database/sheet...`, 'info');
-      await saveDraftToGoogleSheets(updatedDraft, true);
-
-      // 2. Generate & Download Updated Draft PDF only after successful storage
-      setProcessingStage('pdf');
+      // 1. Generate & Download Updated Draft PDF immediately
       addDebugMessage(`Generating updated PDF for draft ${selectedDraft.id}...`, 'info');
       await generatePackingListPDF(updatedDraft);
 
-      // 3. Update local React state
+      // 2. Update local React state immediately
       updateLocalDraft(selectedDraft.id, updatedDraft);
 
-      // 4. Reset form & close modal
+      // 3. Reset form & close modal immediately
       setSelectedDraft(null);
       resetForm();
       setIsCreating(false);
       setIsEditingExisting(false);
-      showToast(`Draft ${selectedDraft.id} updated in database & PDF downloaded!`, "success");
-      loadDraftsFromSheet().catch(() => {});
+      showToast(`Draft ${selectedDraft.id} updated & PDF downloaded!`, "success");
+
+      // 4. Save to Express Backend & Google Sheets in background (non-blocking)
+      saveDraftToGoogleSheets(updatedDraft, true).then(() => {
+        loadDraftsFromSheet().catch(() => {});
+      }).catch(err => console.warn("Background draft update warning:", err.message));
 
     } catch (err) {
       console.error("Error updating draft:", err);
