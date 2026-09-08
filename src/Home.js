@@ -40,7 +40,7 @@ function Home() {
   const staticBaseCards = useMemo(() => [
     {
       path: "/barcode",
-      title: "GS1 Barcode Generator",
+      title: "Barcode Generator",
       icon: "🔖",
       category: "INVENTORY & INTAKE",
       description: "Generate unique GS1-128 high-density barcodes for fabrics, roll lots, and item tracking.",
