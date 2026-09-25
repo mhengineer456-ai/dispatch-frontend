@@ -198,21 +198,28 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
     }
 
     const searchLower = searchTerm.toLowerCase().trim();
+    const cleanSearchLower = searchLower.replace(/^lot[\s\-:]*/i, '');
 
-    // Search by Lot Number OR description prefix (for rows where Lot Number column D is empty in Google Sheets)
+    // Comprehensive search matching Lot Number, Part No, Item Description, Brand, Barcode, or Raw Description
     const matches = allProducts.filter(product => {
       const lotNumber = (product['Lot Number'] || product['lotNumber'] || product['LOT NUMBER'] || "").toString().toLowerCase();
-      const description = (product['Garment Type'] || product['Item Name'] || product['AAAA'] || product['Description'] || "").toString().toLowerCase();
+      const cleanLotNumber = lotNumber.replace(/^lot[\s\-:]*/i, '');
+      const description = (product['Garment Type'] || product['Item Name'] || product['AAAA'] || product['Description'] || product['Raw Description'] || "").toString().toLowerCase();
+      const brand = (product['Brand'] || product['Party Name'] || "").toString().toLowerCase();
+      const partNo = (product['partNo'] || product['PartNo'] || product['PART NO.'] || "").toString().toLowerCase();
+      const barcode = (product['Barcode ID'] || "").toString().toLowerCase();
 
-      return lotNumber.includes(searchLower) || description.startsWith(searchLower) || description.includes(`lot ${searchLower}`);
+      return (
+        lotNumber.includes(searchLower) ||
+        (cleanSearchLower && cleanLotNumber.includes(cleanSearchLower)) ||
+        description.includes(searchLower) ||
+        brand.includes(searchLower) ||
+        partNo.includes(searchLower) ||
+        barcode.includes(searchLower)
+      );
     });
 
     addDebugMessage(`Search for "${searchTerm}" found ${matches.length} matches`, 'info');
-
-    if (matches.length > 0) {
-      const firstFew = matches.slice(0, 5).map(p => `${p['Lot Number'] || p['AAAA']} - ${p['Garment Type'] || p['Item Name']}`);
-      addDebugMessage(`First few matches: ${firstFew.join(', ')}`, 'info');
-    }
 
     // Create suggestions WITHOUT deduplication - keep all entries
     const suggestions = [];
@@ -222,19 +229,19 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
 
       // Fallback: extract lot number from description if Column D was empty
       if (!lotNumber) {
-        const rawDesc = String(product['Garment Type'] || product['Item Name'] || product['AAAA'] || '').trim();
+        const rawDesc = String(product['Garment Type'] || product['Item Name'] || product['AAAA'] || product['Raw Description'] || '').trim();
         const m = rawDesc.match(/^([A-Z0-9\-/]+)/i);
         if (m) lotNumber = m[1];
       }
 
       if (!lotNumber) return;
 
-      const description = product['Garment Type'] || product['Item Name'] || product['AAAA'] || "";
+      const description = product['Garment Type'] || product['Item Name'] || product['AAAA'] || product['Raw Description'] || "";
       const brand = product['Brand'] || product['Party Name'] || "";
       const piecesPerSet = product['Pieces Per Set'] || product['PiecesPerSet'] || 0;
 
       // Create a unique ID for each entry
-      const uniqueId = `${lotNumber}_${description}_${Date.now()}_${Math.random()}`;
+      const uniqueId = `${lotNumber}_${description}_${Math.random()}`;
 
       suggestions.push({
         id: uniqueId,
@@ -255,16 +262,27 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
       });
     });
 
-    // Sort suggestions by lot number then by description
+    // Sort suggestions: exact/prefix lot matches first, then numerical order, then description
     suggestions.sort((a, b) => {
-      // First sort by lot number
+      const aLotClean = a.lotNumber.toLowerCase().replace(/^lot[\s\-:]*/i, '');
+      const bLotClean = b.lotNumber.toLowerCase().replace(/^lot[\s\-:]*/i, '');
+      
+      const aExact = aLotClean === cleanSearchLower || a.lotNumber.toLowerCase() === searchLower;
+      const bExact = bLotClean === cleanSearchLower || b.lotNumber.toLowerCase() === searchLower;
+      if (aExact && !bExact) return -1;
+      if (!aExact && bExact) return 1;
+
+      const aStarts = aLotClean.startsWith(cleanSearchLower);
+      const bStarts = bLotClean.startsWith(cleanSearchLower);
+      if (aStarts && !bStarts) return -1;
+      if (!aStarts && bStarts) return 1;
+
       const lotCompare = a.lotNumber.localeCompare(b.lotNumber, undefined, { numeric: true });
       if (lotCompare !== 0) return lotCompare;
-      // Then by description for same lot number
       return a.description.localeCompare(b.description);
     });
 
-    const limitedSuggestions = suggestions.slice(0, 30); // Show up to 30 entries
+    const limitedSuggestions = suggestions.slice(0, 50); // Show up to 50 entries
 
     setLotSuggestions(limitedSuggestions);
     setShowLotSuggestions(limitedSuggestions.length > 0);
@@ -1966,6 +1984,7 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
             const { mainData, oldData, timestamp } = JSON.parse(cachedData);
             if (Date.now() - timestamp < 2 * 60 * 1000 && mainData?.length && oldData?.length) {
               setSheetData(mainData);
+              setOldLotData(oldData);
               const allData = [...mainData, ...oldData];
               addDebugMessage(`Loaded ${mainData.length} products + ${oldData.length} old lots (from fast cache)`, 'success');
               showToast(`Loaded ${allData.length} products (fast cache)`, "success");
@@ -2019,6 +2038,7 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
       ]);
 
       setSheetData(data);
+      setOldLotData(oldLotProducts);
       const allData = [...data, ...oldLotProducts];
 
       // Save to fast session cache
@@ -4306,6 +4326,11 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
                       setLotSearchTerm(value);
                       setManualLotInput(value);
                       searchLotsWithSuggestions(value);
+                    }}
+                    onFocus={(e) => {
+                      if (e.target.value) {
+                        searchLotsWithSuggestions(e.target.value);
+                      }
                     }}
                     onKeyDown={handleLotInputKeyDown}
                     placeholder="Enter Lot Number..."
