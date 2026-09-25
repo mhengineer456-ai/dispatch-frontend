@@ -117,7 +117,17 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
   const [localEditedDrafts, setLocalEditedDrafts] = useState(() => {
     try {
       const saved = localStorage.getItem('mh_local_drafts_backup');
-      return saved ? JSON.parse(saved) : {};
+      if (!saved) return {};
+      const parsed = JSON.parse(saved);
+      const activeOnly = {};
+      Object.keys(parsed).forEach(key => {
+        const item = parsed[key];
+        const status = (item?.status || '').toLowerCase().trim();
+        if (status !== 'final' && status !== 'converted' && status !== 'completed' && status !== 'final bill' && !status.includes('final')) {
+          activeOnly[key] = item;
+        }
+      });
+      return activeOnly;
     } catch (e) {
       return {};
     }
