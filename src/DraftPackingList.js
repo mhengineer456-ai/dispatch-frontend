@@ -215,42 +215,69 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
 
     try {
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${DRAFTS_SHEET_NAME}?key=${GOOGLE_SHEETS_API_KEY}`;
-      const response = await fetch(url);
+      const response = await fetch(url, { cache: 'no-store' });
       const data = await response.json();
 
       if (data.values && data.values.length > 1) {
         const headers = data.values[0];
         const sheetDrafts = data.values.slice(1).map((row, index) => {
           let jsonData = {};
-          const jsonColumnIndex = headers.findIndex(h => h === 'Draft Data (JSON)');
 
-          if (jsonColumnIndex !== -1 && row[jsonColumnIndex]) {
+          // Flexible header matching helper
+          const findHeaderIdx = (keywords) => headers.findIndex(h => {
+            if (!h) return false;
+            const str = String(h).toLowerCase().trim();
+            return keywords.some(k => str.includes(k));
+          });
+
+          let jsonColumnIndex = findHeaderIdx(['json', 'draft data']);
+
+          // Fallback to column 16 (index 15) if header is missing in row 1
+          if (jsonColumnIndex === -1) {
+            jsonColumnIndex = 15;
+          }
+
+          if (row[jsonColumnIndex]) {
             try {
               jsonData = JSON.parse(row[jsonColumnIndex]);
             } catch (e) {
-              console.error('Error parsing JSON:', e);
+              console.warn('Error parsing JSON at column index ' + jsonColumnIndex, e);
             }
           }
 
-          const draftIdIndex = headers.findIndex(h => h === 'Draft ID');
-          const partyNameIndex = headers.findIndex(h => h === 'Party Name');
-          const statusIndex = headers.findIndex(h => h === 'Status');
-          const createdDateIndex = headers.findIndex(h => h === 'Created Date');
-          const lastModifiedIndex = headers.findIndex(h => h === 'Last Modified');
-          const totalQuantityIndex = headers.findIndex(h => h === 'Total Quantity');
+          // Fallback cell scanner: check all cells in row for JSON payload if jsonData is empty
+          if (!jsonData || !jsonData.items || jsonData.items.length === 0) {
+            for (let c = 0; c < row.length; c++) {
+              const val = String(row[c] || '').trim();
+              if (val.startsWith('{') && val.endsWith('}')) {
+                try {
+                  const parsed = JSON.parse(val);
+                  if (parsed && (parsed.items || parsed.partyName || parsed.billNumber)) {
+                    jsonData = parsed;
+                    break;
+                  }
+                } catch (e) { }
+              }
+            }
+          }
 
-          // FIX: Calculate total quantity properly as number
+          const draftIdIndex = findHeaderIdx(['draft id', 'draft number', 'bill number', 'packing number', 'id']);
+          const partyNameIndex = findHeaderIdx(['party name', 'party']);
+          const statusIndex = findHeaderIdx(['status']);
+          const createdDateIndex = findHeaderIdx(['created date', 'created']);
+          const lastModifiedIndex = findHeaderIdx(['last modified', 'modified']);
+          const totalQuantityIndex = findHeaderIdx(['total quantity', 'total qty', 'quantity']);
+          const billDateIndex = findHeaderIdx(['bill date', 'dispatch date', 'date']);
+
+          // Calculate total quantity properly as number
           let totalQuantity = 0;
 
-          // First try to get from JSON data
           if (jsonData.totalQuantity !== undefined && jsonData.totalQuantity !== null) {
             totalQuantity = Number(jsonData.totalQuantity) || 0;
           }
-          // Then try from the sheet column
           else if (totalQuantityIndex !== -1 && row[totalQuantityIndex]) {
             totalQuantity = Number(row[totalQuantityIndex]) || 0;
           }
-          // Finally calculate from items
           else if (jsonData.items && Array.isArray(jsonData.items)) {
             totalQuantity = jsonData.items.reduce((sum, item) => {
               const qty = Number(item.quantity) || 0;
@@ -258,30 +285,72 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
             }, 0);
           }
 
+          let rawStatus = 'draft';
+          if (statusIndex !== -1 && row[statusIndex] && row[statusIndex].trim()) {
+            rawStatus = row[statusIndex].toString().toLowerCase().trim();
+          } else if (jsonData.status) {
+            rawStatus = jsonData.status.toString().toLowerCase().trim();
+          }
+
+          const draftId = (draftIdIndex !== -1 && row[draftIdIndex] && String(row[draftIdIndex]).trim())
+            ? String(row[draftIdIndex]).trim()
+            : (jsonData.draftNumber || jsonData.billNumber || jsonData.packingNumber || `DRAFT-${index}`);
+
+          const partyName = jsonData.partyName || (partyNameIndex !== -1 ? row[partyNameIndex] : '') || '';
+          const dispatchDate = jsonData.dispatchDate || jsonData.billDate || (billDateIndex !== -1 ? row[billDateIndex] : '') || '';
+
           return {
-            id: row[draftIdIndex] || `DRAFT-${index}`,
-            draftNumber: row[draftIdIndex] || `DRAFT-${index}`,
-            orderNo: jsonData.orderNo || jsonData.billNumber || row[draftIdIndex] || '',
-            partyName: jsonData.partyName || (partyNameIndex !== -1 ? row[partyNameIndex] : ''),
+            id: draftId,
+            draftNumber: draftId,
+            orderNo: jsonData.orderNo || jsonData.billNumber || draftId,
+            partyName: partyName,
             partyId: jsonData.partyId || '',
             items: jsonData.items || [],
-            dispatchDate: jsonData.dispatchDate || jsonData.billDate || '',
+            dispatchDate: dispatchDate,
             deliveryAddress: jsonData.deliveryAddress || '',
             specialInstructions: jsonData.specialInstructions || '',
             priority: jsonData.priority || 'normal',
             notes: jsonData.notes || '',
-            status: statusIndex !== -1 ? row[statusIndex]?.toLowerCase() || 'draft' : 'draft',
+            status: rawStatus || 'draft',
             createdDate: jsonData.createdDate || (createdDateIndex !== -1 ? row[createdDateIndex] : new Date().toISOString()),
             lastModified: lastModifiedIndex !== -1 ? row[lastModifiedIndex] : new Date().toISOString(),
-            totalItems: totalQuantity, // Now this is a proper number, not concatenated string
+            totalItems: totalQuantity,
             preparedBy: jsonData.preparedBy || '',
             preparedByRole: jsonData.preparedByRole || '',
             preparedByEmail: jsonData.preparedByEmail || ''
           };
+        }).filter(draft => {
+          // EXCLUDE empty rows and rows marked as FINAL / CONVERTED / COMPLETED / FINAL BILL
+          if (!draft.id || draft.id === 'DRAFT-undefined') return false;
+          const status = (draft.status || '').toLowerCase().trim();
+          return status !== 'final' && status !== 'converted' && status !== 'completed' && status !== 'final bill' && !status.includes('final');
+        });
+
+        // Clean up local edited drafts backup so converted/deleted drafts don't linger in backup
+        setLocalEditedDrafts(prev => {
+          let changed = false;
+          const updatedLocal = { ...prev };
+          Object.keys(updatedLocal).forEach(key => {
+            const item = updatedLocal[key];
+            const itemStatus = (item?.status || '').toLowerCase().trim();
+            if (itemStatus === 'final' || itemStatus === 'converted' || itemStatus === 'completed' || itemStatus.includes('final')) {
+              delete updatedLocal[key];
+              changed = true;
+            }
+          });
+
+          if (changed) {
+            try {
+              localStorage.setItem('mh_local_drafts_backup', JSON.stringify(updatedLocal));
+            } catch (e) {
+              console.warn("Could not update local drafts backup:", e);
+            }
+          }
+          return changed ? updatedLocal : prev;
         });
 
         setDrafts(sheetDrafts);
-        addDebugMessage(`Loaded ${sheetDrafts.length} drafts from Google Sheets`, 'success');
+        addDebugMessage(`Loaded ${sheetDrafts.length} active drafts from Google Sheets`, 'success');
       } else {
         addDebugMessage("No drafts found in Google Sheets", 'warning');
         setDrafts([]);
@@ -542,6 +611,11 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
     setLocalEditedDrafts(prev => {
       const newState = { ...prev };
       delete newState[draftId];
+      try {
+        localStorage.setItem('mh_local_drafts_backup', JSON.stringify(newState));
+      } catch (e) {
+        console.warn("Could not sync local drafts backup after deletion:", e);
+      }
       return newState;
     });
 
@@ -563,7 +637,7 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
     try {
       setSavingToSheet(true);
       setProcessingStage('pdf');
-      
+
       const newDraftNumber = await getNextBillNumber('DL');
 
       const totalQuantity = draftForm.items.reduce((sum, item) => {
@@ -623,7 +697,7 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
 
       // 4. Save to Express Backend & Google Sheets in background (non-blocking)
       saveDraftToGoogleSheets(newDraft, false).then(() => {
-        loadDraftsFromSheet().catch(() => {});
+        loadDraftsFromSheet().catch(() => { });
       }).catch(err => console.warn("Background draft save warning:", err.message));
 
     } catch (err) {
@@ -699,7 +773,7 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
 
       // 4. Save to Express Backend & Google Sheets in background (non-blocking)
       saveDraftToGoogleSheets(updatedDraft, true).then(() => {
-        loadDraftsFromSheet().catch(() => {});
+        loadDraftsFromSheet().catch(() => { });
       }).catch(err => console.warn("Background draft update warning:", err.message));
 
     } catch (err) {
@@ -800,16 +874,49 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
 
   // ==================== PRODUCT DATABASE FUNCTIONS ====================
 
-  const fetchProductDatabase = async () => {
+  const fetchProductDatabase = async (forceRefresh = false) => {
     setLoadingProductData(true);
     addDebugMessage("Fetching product database...");
 
     try {
-      const mainData = await fetchMainProductData();
-      const oldData = await fetchOldLotData();
+      // 1. Check fast session cache first (TTL: 10 minutes) unless forceRefresh is true
+      if (!forceRefresh) {
+        try {
+          const cachedData = sessionStorage.getItem('mh_product_db_cache');
+          if (cachedData) {
+            const { mainData, oldData, timestamp } = JSON.parse(cachedData);
+            if (Date.now() - timestamp < 2 * 60 * 1000 && mainData?.length && oldData?.length) {
+              setSheetData(mainData);
+              setOldLotData(oldData);
+              addDebugMessage(`Loaded ${mainData.length} products + ${oldData.length} old lots (from fast cache)`, 'success');
+              setLoadingProductData(false);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn("Could not read session cache:", e);
+        }
+      }
+
+      // 2. Fetch both main product data and old lot data concurrently in parallel
+      const [mainData, oldData] = await Promise.all([
+        fetchMainProductData(),
+        fetchOldLotData()
+      ]);
 
       setSheetData(mainData);
       setOldLotData(oldData);
+
+      // 3. Save to fast session cache
+      try {
+        sessionStorage.setItem('mh_product_db_cache', JSON.stringify({
+          mainData,
+          oldData,
+          timestamp: Date.now()
+        }));
+      } catch (e) {
+        console.warn("Could not write session cache:", e);
+      }
 
       addDebugMessage(`Loaded ${mainData.length} products + ${oldData.length} old lots`, 'success');
     } catch (error) {
@@ -1072,15 +1179,26 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
     const searchLower = searchTerm.toLowerCase().trim();
 
     const matches = allProducts.filter(product => {
-      const lotNumber = product['Lot Number']?.toString().toLowerCase() || "";
-      return lotNumber.includes(searchLower);
+      const lotNumber = (product['Lot Number'] || product['lotNumber'] || product['LOT NUMBER'] || "").toString().toLowerCase();
+      const description = (product['Garment Type'] || product['Item Name'] || product['AAAA'] || product['Description'] || "").toString().toLowerCase();
+
+      // Match if Lot Number contains search term OR if description starts with search term
+      return lotNumber.includes(searchLower) || description.startsWith(searchLower) || description.includes(`lot ${searchLower}`);
     });
 
     addDebugMessage(`Search for "${searchTerm}" found ${matches.length} matches`, 'info');
 
     const suggestions = matches.slice(0, 20).map((product, idx) => {
-      const lotNumber = product['Lot Number']?.toString() || "";
-      const description = product['Garment Type'] || product['Item Name'] || "";
+      let lotNumber = product['Lot Number']?.toString() || product['lotNumber']?.toString() || "";
+
+      // Fallback: extract lot number from description if Column D was empty
+      if (!lotNumber) {
+        const rawDesc = String(product['Garment Type'] || product['Item Name'] || product['AAAA'] || '').trim();
+        const m = rawDesc.match(/^([A-Z0-9\-/]+)/i);
+        if (m) lotNumber = m[1];
+      }
+
+      const description = product['Garment Type'] || product['Item Name'] || product['AAAA'] || "";
       const brand = product['Brand'] || product['Party Name'] || "";
       const piecesPerSet = product['Pieces Per Set'] || 0;
 
@@ -1476,16 +1594,26 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
         addDebugMessage(`PDF generated successfully`, 'success');
       }
 
-      // 3. Delete draft from sheet in background (non-blocking)
-      deleteDraftFromSheet(latestDraft.id).catch(err => {
-        console.warn("Background draft delete warning:", err.message);
-      });
+      // 3. Delete draft from sheet
+      try {
+        await deleteDraftFromSheet(latestDraft.id);
+      } catch (err) {
+        console.warn("Draft delete notice:", err.message);
+      }
 
-      // 4. Update UI immediately
-      setDrafts(prev => prev.filter(d => d.id !== draftToConvert.id));
+      // 4. Update UI & purge converted draft from local storage
+      setDrafts(prev => prev.filter(d => d.id !== draftToConvert.id && d.id !== latestDraft.id));
       setLocalEditedDrafts(prev => {
         const newState = { ...prev };
         delete newState[draftToConvert.id];
+        if (draftToConvert.draftNumber) delete newState[draftToConvert.draftNumber];
+        if (latestDraft?.id) delete newState[latestDraft.id];
+        if (latestDraft?.draftNumber) delete newState[latestDraft.draftNumber];
+        try {
+          localStorage.setItem('mh_local_drafts_backup', JSON.stringify(newState));
+        } catch (e) {
+          console.warn("Could not sync local drafts backup after conversion:", e);
+        }
         return newState;
       });
 
@@ -2364,8 +2492,12 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
   // Filter drafts
   const getDisplayDrafts = () => {
     return drafts.map(draft => {
-      if (localEditedDrafts[draft.id]) {
-        return localEditedDrafts[draft.id];
+      const localCopy = localEditedDrafts[draft.id];
+      if (localCopy) {
+        const localStatus = (localCopy.status || '').toLowerCase().trim();
+        if (localStatus !== 'final' && localStatus !== 'converted' && localCopy.items && localCopy.items.length > 0) {
+          return localCopy;
+        }
       }
       return draft;
     });
@@ -2850,7 +2982,22 @@ function DraftPackingList({ onBack, onConvertToDispatch, parties, currentUser })
                       autoComplete="off"
                     />
                     {showLotSuggestions && activeItemIndex === index && lotSuggestions.length > 0 && (
-                      <div className="lot-suggestions-dropdown">
+                      <div
+                        className={`lot-suggestions-dropdown ${index > 0 && index >= draftForm.items.length - 1 ? 'drop-up' : 'drop-down'}`}
+                        style={{
+                          position: 'absolute',
+                          left: 0,
+                          minWidth: '340px',
+                          maxHeight: '230px',
+                          overflowY: 'auto',
+                          zIndex: 999999,
+                          background: '#ffffff',
+                          border: '2px solid #2563eb',
+                          borderRadius: '12px',
+                          boxShadow: '0 14px 40px rgba(15, 23, 42, 0.35)',
+                          ...(index > 0 && index >= draftForm.items.length - 1 ? { bottom: '100%', marginBottom: '6px', top: 'auto' } : { top: '100%', marginTop: '6px', bottom: 'auto' })
+                        }}
+                      >
                         {lotSuggestions.map((suggestion, idx) => (
                           <div
                             key={suggestion.id}

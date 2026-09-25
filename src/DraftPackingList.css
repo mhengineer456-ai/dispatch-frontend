@@ -964,3 +964,62 @@ body {
   justify-content: space-between;
   align-items: center;
 }
+
+/* Enable smooth modal scrolling */
+.form-scrollable-content {
+  overflow-y: auto !important;
+  flex: 1;
+}
+
+/* Fix dropdown menu hidden behind boxes below */
+.form-section,
+.item-row-enhanced,
+.item-row,
+.lot-number-group,
+.form-group {
+  overflow: visible !important;
+  position: relative;
+}
+
+.item-row-enhanced:focus-within,
+.item-row:focus-within,
+.lot-number-group:focus-within,
+.form-group:focus-within {
+  z-index: 99999 !important;
+}
+
+.lot-suggestions-dropdown {
+  position: absolute !important;
+  left: 0 !important;
+  min-width: 340px !important;
+  max-height: 250px !important;
+  overflow-y: auto !important;
+  z-index: 999999 !important;
+  background: #ffffff !important;
+  border: 2px solid #2563eb !important;
+  border-radius: 12px !important;
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.35) !important;
+}
+
+.lot-suggestions-dropdown.drop-up {
+  bottom: 100% !important;
+  top: auto !important;
+  margin-bottom: 6px !important;
+}
+
+.lot-suggestions-dropdown.drop-down {
+  top: 100% !important;
+  bottom: auto !important;
+  margin-top: 6px !important;
+}
+
+.suggestion-item {
+  padding: 10px 14px !important;
+  cursor: pointer !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+}
+
+.suggestion-item:hover,
+.suggestion-item.selected {
+  background-color: #eff6ff !important;
+}

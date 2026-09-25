@@ -199,16 +199,18 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
 
     const searchLower = searchTerm.toLowerCase().trim();
 
-    // Search in Lot Number field using includes (case-insensitive)
+    // Search by Lot Number OR description prefix (for rows where Lot Number column D is empty in Google Sheets)
     const matches = allProducts.filter(product => {
-      const lotNumber = product['Lot Number']?.toString().toLowerCase() || "";
-      return lotNumber.includes(searchLower);
+      const lotNumber = (product['Lot Number'] || product['lotNumber'] || product['LOT NUMBER'] || "").toString().toLowerCase();
+      const description = (product['Garment Type'] || product['Item Name'] || product['AAAA'] || product['Description'] || "").toString().toLowerCase();
+
+      return lotNumber.includes(searchLower) || description.startsWith(searchLower) || description.includes(`lot ${searchLower}`);
     });
 
     addDebugMessage(`Search for "${searchTerm}" found ${matches.length} matches`, 'info');
 
     if (matches.length > 0) {
-      const firstFew = matches.slice(0, 5).map(p => `${p['Lot Number']} - ${p['Garment Type'] || p['Item Name']}`);
+      const firstFew = matches.slice(0, 5).map(p => `${p['Lot Number'] || p['AAAA']} - ${p['Garment Type'] || p['Item Name']}`);
       addDebugMessage(`First few matches: ${firstFew.join(', ')}`, 'info');
     }
 
@@ -216,10 +218,18 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
     const suggestions = [];
 
     matches.forEach(product => {
-      const lotNumber = product['Lot Number']?.toString() || "";
+      let lotNumber = product['Lot Number']?.toString() || product['lotNumber']?.toString() || "";
+
+      // Fallback: extract lot number from description if Column D was empty
+      if (!lotNumber) {
+        const rawDesc = String(product['Garment Type'] || product['Item Name'] || product['AAAA'] || '').trim();
+        const m = rawDesc.match(/^([A-Z0-9\-/]+)/i);
+        if (m) lotNumber = m[1];
+      }
+
       if (!lotNumber) return;
 
-      const description = product['Garment Type'] || product['Item Name'] || "";
+      const description = product['Garment Type'] || product['Item Name'] || product['AAAA'] || "";
       const brand = product['Brand'] || product['Party Name'] || "";
       const piecesPerSet = product['Pieces Per Set'] || product['PiecesPerSet'] || 0;
 
@@ -516,6 +526,35 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
       if (result.success) {
         addDebugMessage(`✅ ${billData.documentType || 'FINAL'} bill saved`, 'success');
         showToast(`Bill saved to Google Sheets`, "success");
+
+        // Clean up local drafts backup if finalizing a draft
+        try {
+          const localBackup = localStorage.getItem('mh_local_drafts_backup');
+          if (localBackup) {
+            const draftsObj = JSON.parse(localBackup);
+            let updated = false;
+            const idsToRemove = [
+              billData.draftId,
+              billData.packingNumber,
+              billData.billNumber,
+              billData.orderNo
+            ].filter(Boolean);
+
+            idsToRemove.forEach(id => {
+              if (draftsObj[id]) {
+                delete draftsObj[id];
+                updated = true;
+              }
+            });
+
+            if (updated) {
+              localStorage.setItem('mh_local_drafts_backup', JSON.stringify(draftsObj));
+            }
+          }
+        } catch (e) {
+          console.warn("Could not purge draft from local storage:", e);
+        }
+
         await fetchLotSummary();
         return true;
       } else {
@@ -1913,58 +1952,87 @@ const PartyBill = ({ parties, bills, selectedParty, onSubmit, onBack, currentUse
     return parsedProducts;
   };
 
-  const fetchGoogleSheetData = async () => {
+  const fetchGoogleSheetData = async (forceRefresh = false) => {
     setLoading(true);
     setDataLoadError(false);
     addDebugMessage("Fetching product database...");
 
     try {
-      let data = null;
+      // 1. Fast Session Cache Check (10 minutes TTL)
+      if (!forceRefresh) {
+        try {
+          const cachedData = sessionStorage.getItem('mh_product_db_cache');
+          if (cachedData) {
+            const { mainData, oldData, timestamp } = JSON.parse(cachedData);
+            if (Date.now() - timestamp < 2 * 60 * 1000 && mainData?.length && oldData?.length) {
+              setSheetData(mainData);
+              const allData = [...mainData, ...oldData];
+              addDebugMessage(`Loaded ${mainData.length} products + ${oldData.length} old lots (from fast cache)`, 'success');
+              showToast(`Loaded ${allData.length} products (fast cache)`, "success");
+              await fetchLotSummaryWithData(allData);
+              setLoading(false);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn("Could not read session cache:", e);
+        }
+      }
 
-      const API_KEY = GOOGLE_API_KEY;
-      const apiUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}?key=${API_KEY}`;
+      // 2. Fetch main sheet data and old lot data concurrently in parallel
+      const fetchMainPromise = (async () => {
+        let mainData = null;
+        const API_KEY = GOOGLE_API_KEY;
+        const apiUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}?key=${API_KEY}`;
 
-      try {
-        const response = await fetch(apiUrl);
-        if (response.ok) {
-          const result = await response.json();
-          if (result.values && result.values.length > 1) {
-            data = parseSheetData(result.values);
-            const withPartNo = data.filter(p => p.partNo || extractPartNo(p)).length;
-            addDebugMessage(`Loaded ${data.length} products from API (${withPartNo} with Part No)`, 'success');
+        try {
+          const response = await fetch(apiUrl);
+          if (response.ok) {
+            const result = await response.json();
+            if (result.values && result.values.length > 1) {
+              mainData = parseSheetData(result.values);
+            }
+          }
+        } catch (apiError) {
+          addDebugMessage(`API failed: ${apiError.message}`, 'error');
+        }
+
+        if (!mainData) {
+          const csvUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
+          const csvResponse = await fetch(csvUrl);
+          if (csvResponse.ok) {
+            const csvText = await csvResponse.text();
+            mainData = parseCSV(csvText);
           }
         }
-      } catch (apiError) {
-        addDebugMessage(`API failed: ${apiError.message}`, 'error');
-      }
 
-      if (!data) {
-        const csvUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
-        const csvResponse = await fetch(csvUrl);
-
-        if (csvResponse.ok) {
-          const csvText = await csvResponse.text();
-          data = parseCSV(csvText);
-          addDebugMessage(`Loaded ${data.length} products from CSV`);
+        if (!mainData || mainData.length === 0) {
+          mainData = getMockData();
         }
-      }
 
-      if (!data || data.length === 0) {
-        addDebugMessage("Using mock data", 'warning');
-        data = getMockData();
-        showToast("Using demo data. Could not connect to Google Sheets.", "warning");
-      }
+        return mainData;
+      })();
+
+      const [data, oldLotProducts] = await Promise.all([
+        fetchMainPromise,
+        fetchOldLotData()
+      ]);
 
       setSheetData(data);
-
-      // Fetch old lot data
-      const oldLotProducts = await fetchOldLotData();
-      const oldWithPartNo = oldLotProducts.filter(p => p.partNo || extractPartNo(p)).length;
-      addDebugMessage(`Loaded ${oldLotProducts.length} products from OLD LOT sheet (${oldWithPartNo} with Part No)`, 'success');
-
       const allData = [...data, ...oldLotProducts];
-      showToast(`Loaded ${data.length} products + ${oldLotProducts.length} old lots = ${allData.length} total`, "success");
 
+      // Save to fast session cache
+      try {
+        sessionStorage.setItem('mh_product_db_cache', JSON.stringify({
+          mainData: data,
+          oldData: oldLotProducts,
+          timestamp: Date.now()
+        }));
+      } catch (e) {
+        console.warn("Could not write session cache:", e);
+      }
+
+      showToast(`Loaded ${data.length} products + ${oldLotProducts.length} old lots = ${allData.length} total`, "success");
       await fetchLotSummaryWithData(allData);
 
     } catch (error) {
